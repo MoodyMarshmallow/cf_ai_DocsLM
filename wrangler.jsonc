@@ -1,0 +1,57 @@
+{
+	"name": "docs-lm",
+	"main": "workers/api/src/index.ts",
+  "compatibility_date": "2026-02-01",
+	"vars": {
+		"ENVIRONMENT": "dev"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "docs_lm",
+			"database_id": "962a4df0-336c-4605-8e36-73810a736108",
+			"remote": true
+		}
+	],
+	"r2_buckets": [
+		{
+			"binding": "DOCS_BUCKET",
+			"bucket_name": "docs-lm",
+			"remote": true
+		}
+	],
+	"vectorize": [
+		{
+			"binding": "VECTORIZE_INDEX",
+			"index_name": "docs_chunks",
+			"remote": true
+		}
+	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "CHAT_SESSIONS",
+				"class_name": "ChatSessionDO"
+			}
+		]
+	},
+  "workflows": [
+    {
+      "name": "IndexProjectWorkflow",
+      "class_name": "IndexProjectWorkflow",
+      "binding": "WORKFLOWS"
+    }
+  ],
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"ChatSessionDO"
+			]
+		}
+	],
+	"ai": {
+		"binding": "AI",
+		"remote": true
+	}
+}
