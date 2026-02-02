@@ -5,7 +5,7 @@ set -euo pipefail
 BASE_URL="${BASE_URL:-http://localhost:8787}"
 PROJECT_ID="${PROJECT_ID:-sample-project}"
 SOURCE_TYPE="${SOURCE_TYPE:-github}"
-SOURCE_REF="${SOURCE_REF:-https://github.com/rtyley/small-test-repo}"
+SOURCE_REF="${SOURCE_REF:-https://github.com/zpqrtbnk/test-repo}"
 DB_NAME="${DB_NAME:-docs_lm}"
 
 echo "Using BASE_URL=${BASE_URL}"

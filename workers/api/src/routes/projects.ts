@@ -1,5 +1,8 @@
 import { Env, IndexRequest, SourceType } from "../../../../packages/shared/src/types"
 
+/**
+ * Routes project creation requests to JSON or multipart handlers.
+ */
 export async function handleProjectCreate(request: Request, env: Env): Promise<Response> {
   const contentType = request.headers.get("content-type") || ""
 
@@ -10,6 +13,9 @@ export async function handleProjectCreate(request: Request, env: Env): Promise<R
   return handleJsonProjectCreate(request, env)
 }
 
+/**
+ * Creates a project from a JSON payload for sitemap or GitHub sources.
+ */
 async function handleJsonProjectCreate(request: Request, env: Env): Promise<Response> {
   const body = await request.json()
   if (!body || typeof body !== "object") {
@@ -45,10 +51,18 @@ async function handleJsonProjectCreate(request: Request, env: Env): Promise<Resp
     return jsonError(created.error, created.status)
   }
 
-  const workflowId = await triggerWorkflow(env, created.indexRequest)
-  return jsonResponse({ project_id: projectId, workflow_id: workflowId })
+  try {
+    const workflowId = await triggerWorkflow(env, created.indexRequest)
+    return jsonResponse({ project_id: projectId, workflow_id: workflowId })
+  } catch (error) {
+    void error
+    return jsonError("Failed to start workflow", 500)
+  }
 }
 
+/**
+ * Creates a project from uploaded files via multipart form data.
+ */
 async function handleMultipartProjectCreate(request: Request, env: Env): Promise<Response> {
   const formData = await request.formData()
   const projectId = String(formData.get("project_id") || "").trim()
@@ -79,10 +93,18 @@ async function handleMultipartProjectCreate(request: Request, env: Env): Promise
     return jsonError(created.error, created.status)
   }
 
-  const workflowId = await triggerWorkflow(env, created.indexRequest)
-  return jsonResponse({ project_id: projectId, workflow_id: workflowId })
+  try {
+    const workflowId = await triggerWorkflow(env, created.indexRequest)
+    return jsonResponse({ project_id: projectId, workflow_id: workflowId })
+  } catch (error) {
+    void error
+    return jsonError("Failed to start workflow", 500)
+  }
 }
 
+/**
+ * Collects all file fields from a multipart payload.
+ */
 function collectFiles(formData: FormData): File[] {
   const files: File[] = []
   for (const value of formData.values()) {
@@ -93,10 +115,16 @@ function collectFiles(formData: FormData): File[] {
   return files
 }
 
+/**
+ * Validates the supported source_type values.
+ */
 function isSourceType(value: unknown): value is SourceType {
   return value === "sitemap" || value === "github" || value === "upload"
 }
 
+/**
+ * Inserts a project row and returns the indexing input on success.
+ */
 async function createProject(
   env: Env,
   input: IndexRequest,
@@ -120,9 +148,12 @@ async function createProject(
   return { ok: true, indexRequest: input }
 }
 
+/**
+ * Triggers the indexing workflow and returns the instance id.
+ */
 async function triggerWorkflow(env: Env, input: IndexRequest): Promise<string> {
   if (!env.WORKFLOWS || !env.WORKFLOWS.create) {
-    return "workflow_disabled"
+    throw new Error("Workflow binding unavailable")
   }
 
   const result = await env.WORKFLOWS.create({
@@ -133,9 +164,12 @@ async function triggerWorkflow(env: Env, input: IndexRequest): Promise<string> {
     return result.id
   }
 
-  return "workflow_started"
+  throw new Error("Workflow did not return an id")
 }
 
+/**
+ * Returns a JSON response with 200 status.
+ */
 function jsonResponse(payload: unknown): Response {
   return new Response(JSON.stringify(payload), {
     status: 200,
@@ -145,6 +179,9 @@ function jsonResponse(payload: unknown): Response {
   })
 }
 
+/**
+ * Returns a JSON error response with the given status code.
+ */
 function jsonError(message: string, status: number): Response {
   return new Response(JSON.stringify({ error: message }), {
     status: status,

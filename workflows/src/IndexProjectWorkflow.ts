@@ -8,6 +8,9 @@ import { Env, IndexRequest } from "../../packages/shared/src/types"
 const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"
 
 export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> {
+  /**
+   * Runs the indexing workflow with durable steps for status, discovery, and processing.
+   */
   async run(event: WorkflowEvent<IndexRequest>, step: WorkflowStep): Promise<void> {
     try {
       const input = event.payload
@@ -36,29 +39,45 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
   }
 }
 
+/**
+ * Resolves source URLs for the configured project source type.
+ */
 async function discoverSources(env: Env, input: IndexRequest): Promise<SourceItem[]> {
-  if (input.source_type === "sitemap") {
-    return discoverSitemapSources(input.source_ref)
+  console.log("[indexing] discovering sources", {
+    project_id: input.project_id,
+    source_type: input.source_type,
+    source_ref: input.source_ref,
+  })
+
+  switch (input.source_type) {
+    case "sitemap":
+      return discoverSitemapSources(input.source_ref)
+    case "github":
+      return discoverGithubSources(input.source_ref)
+    case "upload":
+      return discoverUploadSources(env, input.source_ref)
+    default:
+      return []
   }
-  if (input.source_type === "github") {
-    return discoverGithubSources(input.source_ref)
-  }
-  if (input.source_type === "upload") {
-    return discoverUploadSources(env, input.source_ref)
-  }
-  return []
 }
 
+/**
+ * Fetches sitemap.xml and returns discovered page URLs.
+ */
 async function discoverSitemapSources(sitemapUrl: string): Promise<SourceItem[]> {
   const targetUrl = sitemapUrl.endsWith(".xml") ? sitemapUrl : sitemapUrl.replace(/\/$/, "") + "/sitemap.xml"
   const response = await fetch(targetUrl)
   const xml = await response.text()
   const urls = parseSitemapXml(xml)
+  console.log("[indexing] sitemap sources", { count: urls.length, sitemap: targetUrl })
   return urls.map(function (url) {
     return { url: url, source_type: "sitemap" }
   })
 }
 
+/**
+ * Extracts <loc> URLs from a sitemap XML document.
+ */
 function parseSitemapXml(xml: string): string[] {
   const urls: string[] = []
   const regex = /<loc>(.*?)<\/loc>/g
@@ -70,29 +89,49 @@ function parseSitemapXml(xml: string): string[] {
   return urls
 }
 
+/**
+ * Discovers README and docs/ files for a GitHub repository.
+ */
 async function discoverGithubSources(repoUrl: string): Promise<SourceItem[]> {
   const parsed = parseGithubRepo(repoUrl)
   if (!parsed) {
+    console.log("[indexing] github parse failed", { repo_url: repoUrl })
     return []
   }
 
-  const results: SourceItem[] = []
-  const readmeUrl = "https://api.github.com/repos/" + parsed.owner + "/" + parsed.repo + "/readme"
-  const readme = await fetchGithubContent(readmeUrl)
-  if (readme) {
-    results.push({ url: readme, source_type: "github" })
+  const defaultBranch = await fetchGithubDefaultBranch(parsed.owner, parsed.repo)
+  if (!defaultBranch) {
+    console.log("[indexing] github default branch missing", { repo: repoUrl })
+    return []
   }
 
-  const docsUrl =
-    "https://api.github.com/repos/" + parsed.owner + "/" + parsed.repo + "/contents/docs"
-  const docs = await fetchGithubDirectory(docsUrl)
-  for (const doc of docs) {
-    results.push({ url: doc, source_type: "github" })
+  const treeResult = await fetchGithubTree(parsed.owner, parsed.repo, defaultBranch)
+  if (treeResult && treeResult.truncated) {
+    console.log("[indexing] github tree truncated", { repo: repoUrl })
   }
 
-  return results
+  if (treeResult && treeResult.tree && treeResult.tree.length > 0 && !treeResult.truncated) {
+    const filtered = filterGithubTree(treeResult.tree)
+    const capped = filtered.slice(0, 100)
+    const sources = capped.map(function (item) {
+      return {
+        url: buildGithubRawUrl(parsed.owner, parsed.repo, defaultBranch, item.path),
+        source_type: "github" as const,
+      }
+    })
+
+    console.log("[indexing] github sources", { count: sources.length, repo: repoUrl })
+    return sources
+  }
+
+  const fallback = await discoverGithubFallback(parsed.owner, parsed.repo)
+  console.log("[indexing] github sources", { count: fallback.length, repo: repoUrl })
+  return fallback
 }
 
+/**
+ * Parses a GitHub repository URL into owner/repo components.
+ */
 function parseGithubRepo(repoUrl: string): { owner: string; repo: string } | null {
   const match = repoUrl.match(/github\.com\/([^/]+)\/([^/]+)/)
   if (!match) {
@@ -101,8 +140,11 @@ function parseGithubRepo(repoUrl: string): { owner: string; repo: string } | nul
   return { owner: match[1], repo: match[2].replace(/\.git$/, "") }
 }
 
+/**
+ * Fetches a GitHub API content entry and returns its download URL.
+ */
 async function fetchGithubContent(apiUrl: string): Promise<string | null> {
-  const response = await fetch(apiUrl)
+  const response = await githubFetch(apiUrl)
   if (!response.ok) {
     return null
   }
@@ -113,8 +155,11 @@ async function fetchGithubContent(apiUrl: string): Promise<string | null> {
   return null
 }
 
+/**
+ * Lists file download URLs from a GitHub directory endpoint.
+ */
 async function fetchGithubDirectory(apiUrl: string): Promise<string[]> {
-  const response = await fetch(apiUrl)
+  const response = await githubFetch(apiUrl)
   if (!response.ok) {
     return []
   }
@@ -132,14 +177,181 @@ async function fetchGithubDirectory(apiUrl: string): Promise<string[]> {
   return urls
 }
 
+async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<string | null> {
+  const url = "https://api.github.com/repos/" + owner + "/" + repo
+  const response = await githubFetch(url)
+  if (!response.ok) {
+    return null
+  }
+  const data = await response.json()
+  if (data && data.default_branch) {
+    return String(data.default_branch)
+  }
+  return null
+}
+
+async function fetchGithubTree(
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<{ tree: GithubTreeItem[]; truncated: boolean } | null> {
+  const url =
+    "https://api.github.com/repos/" + owner + "/" + repo + "/git/trees/" + branch + "?recursive=1"
+  const response = await githubFetch(url)
+  if (!response.ok) {
+    return null
+  }
+  const data = await response.json()
+  if (!data || !Array.isArray(data.tree)) {
+    return null
+  }
+  return { tree: data.tree as GithubTreeItem[], truncated: Boolean(data.truncated) }
+}
+
+function filterGithubTree(items: GithubTreeItem[]): GithubTreeItem[] {
+  const candidates = items.filter(function (item) {
+    if (!item || item.type !== "blob" || !item.path) {
+      return false
+    }
+    if (isIgnoredPath(item.path)) {
+      return false
+    }
+    if (!isAllowedDocPath(item.path)) {
+      return false
+    }
+    return true
+  })
+
+  const scored = candidates.map(function (item) {
+    return { item: item, score: scoreDocPath(item.path) }
+  })
+
+  scored.sort(function (left, right) {
+    return right.score - left.score
+  })
+
+  return scored.map(function (entry) {
+    return entry.item
+  })
+}
+
+function isAllowedDocPath(path: string): boolean {
+  const lower = path.toLowerCase()
+  const extensions = [
+    ".md",
+    ".mdx",
+    ".rst",
+    ".adoc",
+    ".asciidoc",
+    ".txt",
+    ".text",
+    ".mdown",
+    ".markdown",
+    ".mkd",
+    ".mdwn",
+  ]
+
+  for (const ext of extensions) {
+    if (lower.endsWith(ext)) {
+      return true
+    }
+  }
+  return false
+}
+
+function isIgnoredPath(path: string): boolean {
+  const ignoredPrefixes = [
+    "node_modules/",
+    "dist/",
+    "build/",
+    "out/",
+    ".next/",
+    ".nuxt/",
+    ".cache/",
+    "coverage/",
+    "vendor/",
+    "tmp/",
+    "logs/",
+    "public/assets/",
+    ".git/",
+  ]
+
+  for (const prefix of ignoredPrefixes) {
+    if (path.startsWith(prefix)) {
+      return true
+    }
+  }
+  return false
+}
+
+function scoreDocPath(path: string): number {
+  const lower = path.toLowerCase()
+  let score = 0
+
+  if (lower.includes("docs/")) {
+    score += 5
+  }
+  if (lower.includes("guide") || lower.includes("guides/")) {
+    score += 3
+  }
+  if (lower.includes("reference") || lower.includes("manual")) {
+    score += 2
+  }
+  if (lower.includes("api/")) {
+    score += 2
+  }
+  if (lower.includes("readme")) {
+    score += 4
+  }
+
+  return score
+}
+
+function buildGithubRawUrl(owner: string, repo: string, branch: string, path: string): string {
+  return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + branch + "/" + path
+}
+
+function githubFetch(url: string): Promise<Response> {
+  return fetch(url, {
+    headers: {
+      "User-Agent": "docs-lm",
+      Accept: "application/vnd.github+json",
+    },
+  })
+}
+
+async function discoverGithubFallback(owner: string, repo: string): Promise<SourceItem[]> {
+  const results: SourceItem[] = []
+  const readmeUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/readme"
+  const readme = await fetchGithubContent(readmeUrl)
+  if (readme) {
+    results.push({ url: readme, source_type: "github" })
+  }
+
+  const docsUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/contents/docs"
+  const docs = await fetchGithubDirectory(docsUrl)
+  for (const doc of docs) {
+    results.push({ url: doc, source_type: "github" })
+  }
+
+  return results
+}
+
+/**
+ * Lists uploaded objects in R2 for the given project prefix.
+ */
 async function discoverUploadSources(env: Env, sourceRef: string): Promise<SourceItem[]> {
   const prefix = sourceRef.replace("r2://", "")
   const listResult = await env.DOCS_BUCKET.list({ prefix: prefix })
+  console.log("[indexing] upload sources", { count: listResult.objects.length, prefix: prefix })
   return listResult.objects.map(function (obj) {
     return { url: obj.key, source_type: "upload" }
   })
 }
 
+/**
+ * Fetches, normalizes, chunks, embeds, and stores a single source document.
+ */
 async function processSource(env: Env, input: IndexRequest, source: SourceItem): Promise<void> {
   const fetchResult = await fetchSource(env, source)
   if (!fetchResult.ok) {
@@ -150,6 +362,8 @@ async function processSource(env: Env, input: IndexRequest, source: SourceItem):
   if (!normalized.ok) {
     return
   }
+
+  logContentPreview(input.project_id, fetchResult.url, normalized.text)
 
   const contentHash = await sha256Hex(normalized.text)
   const docId = await sha256Hex(input.project_id + fetchResult.url)
@@ -167,12 +381,16 @@ async function processSource(env: Env, input: IndexRequest, source: SourceItem):
 
   await upsertDocument(env, document)
 
-  const chunks = chunkText(normalized.text, { max_chars: 4000, overlap_chars: 400 })
-  for (const chunk of chunks) {
+  const chunks = chunkText(normalized.text, { max_chars: 8000, overlap_chars: 800 })
+  const cappedChunks = chunks.slice(0, 500)
+  for (const chunk of cappedChunks) {
     await processChunk(env, input, document, chunk)
   }
 }
 
+/**
+ * Loads a source document from R2 or HTTP and stores raw content in R2.
+ */
 async function fetchSource(env: Env, source: SourceItem): Promise<FetchResult> {
   if (source.source_type === "upload") {
     const r2Key = source.url
@@ -211,6 +429,9 @@ async function fetchSource(env: Env, source: SourceItem): Promise<FetchResult> {
   }
 }
 
+/**
+ * Normalizes raw content into plain text, rejecting unsupported types.
+ */
 function normalizeContent(fetchResult: FetchResult): NormalizeResult {
   if (!fetchResult.ok) {
     return { ok: false, error: "Fetch failed" }
@@ -228,6 +449,9 @@ function normalizeContent(fetchResult: FetchResult): NormalizeResult {
   return { ok: true, text: normalizeMarkdownToText(fetchResult.raw_text) }
 }
 
+/**
+ * Embeds a chunk and persists vector metadata and chunk text.
+ */
 async function processChunk(
   env: Env,
   input: IndexRequest,
@@ -257,6 +481,9 @@ async function processChunk(
   })
 }
 
+/**
+ * Generates an embedding for the given text using Workers AI.
+ */
 async function embedText(env: Env, text: string): Promise<number[]> {
   const result = await env.AI.run(EMBEDDING_MODEL, { text: [text] })
   const parsed = result as { data?: number[][] }
@@ -266,6 +493,9 @@ async function embedText(env: Env, text: string): Promise<number[]> {
   return []
 }
 
+/**
+ * Upserts a vector with metadata into Vectorize.
+ */
 async function upsertVector(
   env: Env,
   chunkId: string,
@@ -278,6 +508,9 @@ async function upsertVector(
   await env.VECTORIZE_INDEX.upsert([{ id: chunkId, values: vector, metadata: metadata }])
 }
 
+/**
+ * Inserts or updates a document record in D1.
+ */
 async function upsertDocument(env: Env, doc: DocumentInsert): Promise<void> {
   const statement = env.DB.prepare(
     "INSERT OR REPLACE INTO documents (doc_id, project_id, url, r2_key_raw, r2_key_text, content_hash, title, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -296,6 +529,9 @@ async function upsertDocument(env: Env, doc: DocumentInsert): Promise<void> {
     .run()
 }
 
+/**
+ * Inserts or updates a chunk record in D1.
+ */
 async function upsertChunk(env: Env, chunk: ChunkInsert): Promise<void> {
   const statement = env.DB.prepare(
     "INSERT OR REPLACE INTO chunks (chunk_id, project_id, doc_id, url, heading_path, chunk_index, text, content_hash, token_estimate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -315,6 +551,9 @@ async function upsertChunk(env: Env, chunk: ChunkInsert): Promise<void> {
     .run()
 }
 
+/**
+ * Updates the project status in D1.
+ */
 async function markProjectStatus(env: Env, input: IndexRequest, status: string): Promise<void> {
   const statement = env.DB.prepare(
     "UPDATE projects SET status = ?, updated_at = ? WHERE project_id = ?",
@@ -322,9 +561,31 @@ async function markProjectStatus(env: Env, input: IndexRequest, status: string):
   await statement.bind(status, new Date().toISOString(), input.project_id).run()
 }
 
+/**
+ * Logs the content source and a short preview for debugging indexing.
+ */
+function logContentPreview(projectId: string, sourceUrl: string, text: string): void {
+  const previewLength = 160
+  const preview = text.slice(0, previewLength).replace(/\s+/g, " ").trim()
+  const message =
+    "[indexing] project=" +
+    projectId +
+    " source=" +
+    sourceUrl +
+    " preview=\"" +
+    preview +
+    "\""
+  console.log(message)
+}
+
 interface SourceItem {
   url: string
   source_type: "sitemap" | "github" | "upload"
+}
+
+interface GithubTreeItem {
+  path: string
+  type: string
 }
 
 interface FetchResultOk {

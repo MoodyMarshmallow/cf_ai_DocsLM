@@ -16,7 +16,7 @@ export function chunkText(input: string, options: ChunkingOptions): ChunkResult[
   let chunkIndex = 0
 
   for (const section of sections) {
-    const sectionChunks = splitBySize(section.text, options.max_chars, options.overlap_chars)
+    const sectionChunks = recursiveSplit(section.text, options.max_chars, options.overlap_chars)
     for (const piece of sectionChunks) {
       const tokenEstimate = estimateTokens(piece)
       chunks.push({
@@ -100,6 +100,81 @@ function splitBySize(text: string, maxChars: number, overlapChars: number): stri
   }
 
   return chunks
+}
+
+function recursiveSplit(text: string, maxChars: number, overlapChars: number): string[] {
+  if (text.length <= maxChars) {
+    return [text]
+  }
+
+  const paragraphs = splitByParagraphs(text)
+  if (paragraphs.length > 1) {
+    return packSegments(paragraphs, maxChars, overlapChars)
+  }
+
+  const sentences = splitBySentences(text)
+  if (sentences.length > 1) {
+    return packSegments(sentences, maxChars, overlapChars)
+  }
+
+  return splitBySize(text, maxChars, overlapChars)
+}
+
+function splitByParagraphs(text: string): string[] {
+  const parts = text.split(/\n\s*\n+/)
+  return parts.map(function (part) {
+    return part.trim()
+  }).filter(function (part) {
+    return part.length > 0
+  })
+}
+
+function splitBySentences(text: string): string[] {
+  const parts = text.split(/(?<=[.!?])\s+/)
+  return parts.map(function (part) {
+    return part.trim()
+  }).filter(function (part) {
+    return part.length > 0
+  })
+}
+
+function packSegments(segments: string[], maxChars: number, overlapChars: number): string[] {
+  const packed: string[] = []
+  let buffer = ""
+
+  for (const segment of segments) {
+    if (!buffer) {
+      buffer = segment
+      continue
+    }
+
+    if (buffer.length + segment.length + 1 <= maxChars) {
+      buffer = buffer + "\n" + segment
+      continue
+    }
+
+    packed.push(buffer)
+    buffer = applyOverlap(buffer, segment, overlapChars, maxChars)
+  }
+
+  if (buffer) {
+    packed.push(buffer)
+  }
+
+  return packed
+}
+
+function applyOverlap(previous: string, next: string, overlapChars: number, maxChars: number): string {
+  if (overlapChars <= 0) {
+    return next
+  }
+
+  const overlap = previous.slice(Math.max(0, previous.length - overlapChars))
+  if (overlap.length + next.length + 1 <= maxChars) {
+    return overlap + "\n" + next
+  }
+
+  return next
 }
 
 function estimateTokens(text: string): number {

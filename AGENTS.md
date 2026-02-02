@@ -28,6 +28,11 @@ wrangler dev --remote --config wrangler.jsonc
 npm run lint
 ```
 
+### Types
+```bash
+npx wrangler types
+```
+
 ### Migrations
 ```bash
 wrangler d1 create docs_lm
@@ -42,6 +47,7 @@ No test runner is configured. If you add tests later, document the exact command
 ```bash
 bash scripts/test_backend.sh
 ```
+Note: the script deletes existing project rows via remote D1 when it sees a 409.
 
 ## Code Style Guidelines
 Follow these conventions consistently. The project deliberately avoids terse patterns.
@@ -84,6 +90,7 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - Durable Object handles session state, retrieval, and LLM calls.
 - Workflow handles ingestion and indexing only.
 - Shared utilities live in `packages/shared/src`.
+- Workflows must extend `WorkflowEntrypoint` from `cloudflare:workers`.
 
 ### Data access
 - Use D1 prepared statements with `bind`.
@@ -95,11 +102,14 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - R2 stores raw/normalized documents (source of truth).
 - Vectorize stores embeddings with metadata filters.
 - Durable Object storage stores per-session memory (summary and recent turns).
+- Projects are the sole retrieval scope; there is no docset/version layer.
 
 ### RAG behavior
 - Embeddings must be generated with Workers AI.
 - Retrieval must filter by `project_id`.
 - Provide citations in responses (URLs and optional headings).
+- Chunking is recursive (headings → paragraphs → sentences) with overlap.
+- GitHub ingestion uses the repo tree API and raw GitHub URLs (public repos only).
 
 ### API behavior
 - `POST /api/projects` creates a project and triggers indexing.
@@ -112,10 +122,12 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - Durable Object migrations are required; do not remove the `migrations` block.
 - Ensure bindings exist: `AI`, `DB`, `DOCS_BUCKET`, `VECTORIZE_INDEX`, `CHAT_SESSIONS`, `WORKFLOWS`.
 - Workflows binding uses `IndexProjectWorkflow`.
+- Remote bindings are enabled per binding (see `wrangler.jsonc`).
 
 ## Security and Secrets
 - Do not log secrets or request bodies containing credentials.
 - Keep `.dev.vars` and `.env*` files out of version control.
+- Treat project IDs as user-provided input; validate and sanitize where needed.
 
 ## When Adding Tests (future)
 Add a minimal test runner and document:
