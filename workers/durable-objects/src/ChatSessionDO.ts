@@ -57,6 +57,7 @@ export class ChatSessionDO {
     }
 
     const retrieval = await this.retrieveContext(parsed.value, session)
+    logRetrievalContext(parsed.value.project_id, retrieval)
     const responseText = await this.generateResponse(parsed.value, session, retrieval)
 
     session.turns.push({ role: "user", content: parsed.value.message })
@@ -163,6 +164,7 @@ function parseChatRequest(
 }
 
 async function embedText(env: Env, text: string): Promise<number[]> {
+  console.log('embedding text: ' + text)
   const result = await env.AI.run(EMBEDDING_MODEL, { text: [text] })
   const parsed = result as { data?: number[][] }
   if (parsed && parsed.data && parsed.data[0]) {
@@ -183,7 +185,7 @@ async function queryVectorize(
   const filter: Record<string, string> = {
     project_id: filters.project_id,
   }
-
+  
   const result = (await env.VECTORIZE_INDEX.query(vector, {
     topK: 6,
     filter: filter,
@@ -240,6 +242,20 @@ function updateSummary(existing: string, latestResponse: string): string {
     return combined.slice(combined.length - 1000)
   }
   return combined
+}
+
+function logRetrievalContext(
+  projectId: string,
+  retrieval: { context: string; citations: Array<{ url: string; heading_path?: string }> },
+): void {
+  const previewLength = 200
+  const preview = retrieval.context.slice(0, previewLength).replace(/\s+/g, " ").trim()
+  console.log("[chat] retrieval context", {
+    project_id: projectId,
+    has_context: Boolean(retrieval.context),
+    citations: retrieval.citations.length,
+    preview: preview,
+  })
 }
 
 function jsonResponse(payload: unknown): Response {
