@@ -4,7 +4,6 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8787}"
 PROJECT_ID="${PROJECT_ID:-sample-project}"
-SOURCE_TYPE="${SOURCE_TYPE:-github}"
 SOURCE_REF="${SOURCE_REF:-https://github.com/zpqrtbnk/test-repo}"
 DB_NAME="${DB_NAME:-docs_lm}"
 
@@ -13,7 +12,7 @@ echo "Creating project ${PROJECT_ID}"
 
 create_response=$(curl -sS -X POST "${BASE_URL}/api/projects" \
   -H "content-type: application/json" \
-  -d "{\"project_id\":\"${PROJECT_ID}\",\"source_type\":\"${SOURCE_TYPE}\",\"source_ref\":\"${SOURCE_REF}\"}" \
+  -d "{\"project_id\":\"${PROJECT_ID}\",\"source_ref\":\"${SOURCE_REF}\"}" \
   -w "\n%{http_code}")
 
 create_body=$(printf "%s" "${create_response}" | head -n 1)
@@ -28,7 +27,7 @@ if [ "${create_status}" = "409" ]; then
   echo "Creating project ${PROJECT_ID}"
   curl -sS -X POST "${BASE_URL}/api/projects" \
     -H "content-type: application/json" \
-    -d "{\"project_id\":\"${PROJECT_ID}\",\"source_type\":\"${SOURCE_TYPE}\",\"source_ref\":\"${SOURCE_REF}\"}" \
+    -d "{\"project_id\":\"${PROJECT_ID}\",\"source_ref\":\"${SOURCE_REF}\"}" \
     | tee /tmp/docs_lm_project_create.json
 fi
 

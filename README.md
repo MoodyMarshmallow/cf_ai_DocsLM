@@ -45,18 +45,11 @@ wrangler dev --remote --config wrangler.jsonc
 ```
 
 ### Example requests
-Create a project from a sitemap:
-```bash
-curl -X POST http://127.0.0.1:8787/api/projects \
-  -H "content-type: application/json" \
-  -d '{"project_id":"my-project","source_type":"sitemap","source_ref":"https://example.com/sitemap.xml"}'
-```
-
 Create a project from a GitHub repo:
 ```bash
 curl -X POST http://127.0.0.1:8787/api/projects \
   -H "content-type: application/json" \
-  -d '{"project_id":"my-project","source_type":"github","source_ref":"https://github.com/org/repo"}'
+  -d '{"project_id":"my-project","source_ref":"https://github.com/org/repo"}'
 ```
 
 Check indexing status:

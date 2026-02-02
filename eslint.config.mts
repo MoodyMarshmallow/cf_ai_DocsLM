@@ -8,7 +8,7 @@ import { defineConfig } from "eslint/config";
 const jsonPlugin = json as unknown as Record<string, unknown>;
 
 export default defineConfig([
-  { ignores: ["package-lock.json", ".wrangler/**"] },
+  { ignores: ["package-lock.json", "worker-configuration.d.ts", ".wrangler/**"] },
   {
     files: ["**/*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
     plugins: { js },

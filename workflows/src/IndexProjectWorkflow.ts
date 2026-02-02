@@ -15,18 +15,30 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
     try {
       const input = event.payload
       const env = this.env
+      const maxChunks = 500
+      let remainingChunks = maxChunks
       await step.do("mark project indexing", async function () {
         await markProjectStatus(env, input, "indexing")
       })
 
       const sources = await step.do("discover sources", async function () {
-        return discoverSources(env, input)
+        return discoverSources(input)
       })
 
-      for (const source of sources) {
-        await step.do("process source", async function () {
-          await processSource(env, input, source)
+      const sortedSources = sources.slice().sort(function (left, right) {
+        return right.score - left.score
+      })
+
+      for (const source of sortedSources) {
+        if (remainingChunks <= 0) {
+          break
+        }
+
+        const processed = await step.do("process source", async function () {
+          return processSource(env, input, source, remainingChunks)
         })
+
+        remainingChunks = Math.max(0, remainingChunks - processed)
       }
 
       await step.do("mark project ready", async function () {
@@ -42,52 +54,16 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
 /**
  * Resolves source URLs for the configured project source type.
  */
-async function discoverSources(env: Env, input: IndexRequest): Promise<SourceItem[]> {
+async function discoverSources(input: IndexRequest): Promise<SourceItem[]> {
   console.log("[indexing] discovering sources", {
     project_id: input.project_id,
     source_type: input.source_type,
     source_ref: input.source_ref,
   })
 
-  switch (input.source_type) {
-    case "sitemap":
-      return discoverSitemapSources(input.source_ref)
-    case "github":
-      return discoverGithubSources(input.source_ref)
-    case "upload":
-      return discoverUploadSources(env, input.source_ref)
-    default:
-      return []
-  }
+  return discoverGithubSources(input.source_ref)
 }
 
-/**
- * Fetches sitemap.xml and returns discovered page URLs.
- */
-async function discoverSitemapSources(sitemapUrl: string): Promise<SourceItem[]> {
-  const targetUrl = sitemapUrl.endsWith(".xml") ? sitemapUrl : sitemapUrl.replace(/\/$/, "") + "/sitemap.xml"
-  const response = await fetch(targetUrl)
-  const xml = await response.text()
-  const urls = parseSitemapXml(xml)
-  console.log("[indexing] sitemap sources", { count: urls.length, sitemap: targetUrl })
-  return urls.map(function (url) {
-    return { url: url, source_type: "sitemap" }
-  })
-}
-
-/**
- * Extracts <loc> URLs from a sitemap XML document.
- */
-function parseSitemapXml(xml: string): string[] {
-  const urls: string[] = []
-  const regex = /<loc>(.*?)<\/loc>/g
-  let match = regex.exec(xml)
-  while (match) {
-    urls.push(match[1])
-    match = regex.exec(xml)
-  }
-  return urls
-}
 
 /**
  * Discovers README and docs/ files for a GitHub repository.
@@ -117,6 +93,7 @@ async function discoverGithubSources(repoUrl: string): Promise<SourceItem[]> {
       return {
         url: buildGithubRawUrl(parsed.owner, parsed.repo, defaultBranch, item.path),
         source_type: "github" as const,
+        score: item.score,
       }
     })
 
@@ -208,7 +185,7 @@ async function fetchGithubTree(
   return { tree: data.tree as GithubTreeItem[], truncated: Boolean(data.truncated) }
 }
 
-function filterGithubTree(items: GithubTreeItem[]): GithubTreeItem[] {
+function filterGithubTree(items: GithubTreeItem[]): Array<GithubTreeItem & { score: number }> {
   const candidates = items.filter(function (item) {
     if (!item || item.type !== "blob" || !item.path) {
       return false
@@ -231,7 +208,7 @@ function filterGithubTree(items: GithubTreeItem[]): GithubTreeItem[] {
   })
 
   return scored.map(function (entry) {
-    return entry.item
+    return { path: entry.item.path, type: entry.item.type, score: entry.score }
   })
 }
 
@@ -307,6 +284,24 @@ function scoreDocPath(path: string): number {
   return score
 }
 
+function scoreSourceUrl(url: string): number {
+  const path = extractPathFromUrl(url)
+  return scoreDocPath(path)
+}
+
+function extractPathFromUrl(url: string): string {
+  const raw = url.replace(/^r2:\/\//, "")
+  if (raw.startsWith("http://") || raw.startsWith("https://")) {
+    try {
+      return new URL(raw).pathname.replace(/^\//, "")
+    } catch (error) {
+      void error
+      return raw
+    }
+  }
+  return raw
+}
+
 function buildGithubRawUrl(owner: string, repo: string, branch: string, path: string): string {
   return "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + branch + "/" + path
 }
@@ -325,42 +320,39 @@ async function discoverGithubFallback(owner: string, repo: string): Promise<Sour
   const readmeUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/readme"
   const readme = await fetchGithubContent(readmeUrl)
   if (readme) {
-    results.push({ url: readme, source_type: "github" })
+    results.push({ url: readme, source_type: "github", score: scoreSourceUrl(readme) })
   }
 
   const docsUrl = "https://api.github.com/repos/" + owner + "/" + repo + "/contents/docs"
   const docs = await fetchGithubDirectory(docsUrl)
   for (const doc of docs) {
-    results.push({ url: doc, source_type: "github" })
+    results.push({ url: doc, source_type: "github", score: scoreSourceUrl(doc) })
   }
 
   return results
 }
 
 /**
- * Lists uploaded objects in R2 for the given project prefix.
- */
-async function discoverUploadSources(env: Env, sourceRef: string): Promise<SourceItem[]> {
-  const prefix = sourceRef.replace("r2://", "")
-  const listResult = await env.DOCS_BUCKET.list({ prefix: prefix })
-  console.log("[indexing] upload sources", { count: listResult.objects.length, prefix: prefix })
-  return listResult.objects.map(function (obj) {
-    return { url: obj.key, source_type: "upload" }
-  })
-}
-
-/**
  * Fetches, normalizes, chunks, embeds, and stores a single source document.
  */
-async function processSource(env: Env, input: IndexRequest, source: SourceItem): Promise<void> {
+async function processSource(
+  env: Env,
+  input: IndexRequest,
+  source: SourceItem,
+  remainingChunks: number,
+): Promise<number> {
+  if (remainingChunks <= 0) {
+    return 0
+  }
+
   const fetchResult = await fetchSource(env, source)
   if (!fetchResult.ok) {
-    return
+    return 0
   }
 
   const normalized = normalizeContent(fetchResult)
   if (!normalized.ok) {
-    return
+    return 0
   }
 
   logContentPreview(input.project_id, fetchResult.url, normalized.text)
@@ -381,34 +373,19 @@ async function processSource(env: Env, input: IndexRequest, source: SourceItem):
 
   await upsertDocument(env, document)
 
-  const chunks = chunkText(normalized.text, { max_chars: 8000, overlap_chars: 800 })
-  const cappedChunks = chunks.slice(0, 500)
+  const chunks = chunkText(normalized.text, { max_chars: 8000, overlap_chars: 800, min_chars: 500 })
+  const cappedChunks = chunks.slice(0, Math.max(0, remainingChunks))
   for (const chunk of cappedChunks) {
     await processChunk(env, input, document, chunk)
   }
+
+  return cappedChunks.length
 }
 
 /**
  * Loads a source document from R2 or HTTP and stores raw content in R2.
  */
 async function fetchSource(env: Env, source: SourceItem): Promise<FetchResult> {
-  if (source.source_type === "upload") {
-    const r2Key = source.url
-    const object = await env.DOCS_BUCKET.get(r2Key)
-    if (!object) {
-      return { ok: false, error: "R2 object not found" }
-    }
-    const text = await object.text()
-    return {
-      ok: true,
-      url: r2Key,
-      content_type: object.httpMetadata?.contentType || "text/plain",
-      raw_text: text,
-      r2_key_raw: r2Key,
-      r2_key_text: undefined,
-    }
-  }
-
   const response = await fetch(source.url)
   if (!response.ok) {
     return { ok: false, error: "Failed to fetch source" }
@@ -580,7 +557,8 @@ function logContentPreview(projectId: string, sourceUrl: string, text: string): 
 
 interface SourceItem {
   url: string
-  source_type: "sitemap" | "github" | "upload"
+  source_type: "github"
+  score: number
 }
 
 interface GithubTreeItem {

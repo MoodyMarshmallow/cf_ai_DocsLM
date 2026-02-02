@@ -112,7 +112,7 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - GitHub ingestion uses the repo tree API and raw GitHub URLs (public repos only).
 
 ### API behavior
-- `POST /api/projects` creates a project and triggers indexing.
+- `POST /api/projects` creates a project from a GitHub repo URL and triggers indexing.
 - `POST /api/index/start` triggers an indexing workflow for an existing project.
 - `GET /api/index/status` returns the project status.
 - `POST /api/chat` forwards to the session Durable Object.

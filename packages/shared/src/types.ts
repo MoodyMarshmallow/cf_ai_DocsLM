@@ -1,4 +1,4 @@
-export type SourceType = "sitemap" | "github" | "upload"
+export type SourceType = "github"
 
 export interface Env {
   AI: WorkersAIBinding

@@ -38,26 +38,18 @@ function parseIndexRequest(body: unknown): { ok: true; value: IndexRequest } | {
 
   const payload = body as Record<string, unknown>
 
-  if (!payload.project_id || !payload.source_type || !payload.source_ref) {
-    return { ok: false, error: "project_id, source_type, and source_ref are required" }
-  }
-
-  if (!isSourceType(payload.source_type)) {
-    return { ok: false, error: "source_type must be sitemap, github, or upload" }
+  if (!payload.project_id || !payload.source_ref) {
+    return { ok: false, error: "project_id and source_ref are required" }
   }
 
   return {
     ok: true,
     value: {
       project_id: String(payload.project_id),
-      source_type: payload.source_type,
+      source_type: "github",
       source_ref: String(payload.source_ref),
     },
   }
-}
-
-function isSourceType(value: unknown): value is IndexRequest["source_type"] {
-  return value === "sitemap" || value === "github" || value === "upload"
 }
 
 async function triggerWorkflow(env: Env, input: IndexRequest): Promise<string> {

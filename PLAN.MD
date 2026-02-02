@@ -5,7 +5,7 @@ I often find myself having to quickly learn a large chunk of information, and a 
 DocsLM makes this body of text an interactive experience, complete with a bunch of useful tools like a chatbot, mind maps, and quizzes that helps me quickly understand the content holistically.
 ## Goals
 ### Current Goals
-Make a webapp that generates a chatbot from a given url of a github repo, pdf, or any other text-based content. This is done by:
+Make a webapp that generates a chatbot from a given URL of a public GitHub repo. This is done by:
 1. Indexing the webpage/document
 2. Store in vector DB
 3. Wire tool to model to retrieve relevant information
@@ -17,6 +17,11 @@ Make a webapp that generates a chatbot from a given url of a github repo, pdf, o
 2. Build more user-facing features
 - Mind map
 - Quiz generator
+3. Add more ingestion methods
+- Sitemap-based crawling
+- Direct file uploads to R2
+- PDF ingestion
+- Other text-based sources
 ## Technical Details
 ### Project file structure overview
 This section describes the intended layout for a Cloudflare-first implementation. The exact structure can be adapted, but the modules below are the expected logical boundaries.
@@ -138,6 +143,7 @@ const WORKERS_AI = {
 The core flows are designed around Cloudflare-native services for coordination, embeddings, user input, and memory.
 
 Ingestion and indexing (Workflow-driven)
+Current scope: GitHub repo ingestion only. Other methods are stretch goals.
 ```ts
 type IndexRequest = {
   project_id: string
@@ -228,8 +234,8 @@ Chat page (Pages)
 - Streaming responses with partial tokens for perceived speed
 
 Project creation
-- Inline flow to create a new project and upload docs as part of setup
-- Source options: sitemap URL, GitHub repo URL, or file upload to R2
+- Inline flow to create a new project from a GitHub repo URL
+- Additional ingestion methods moved to stretch goals
 - Show indexing status inside the project view
 
 State handling

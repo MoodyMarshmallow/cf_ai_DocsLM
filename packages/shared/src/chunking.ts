@@ -1,6 +1,7 @@
 export interface ChunkingOptions {
   max_chars: number
   overlap_chars: number
+  min_chars: number
 }
 
 export interface ChunkResult {
@@ -17,7 +18,8 @@ export function chunkText(input: string, options: ChunkingOptions): ChunkResult[
 
   for (const section of sections) {
     const sectionChunks = recursiveSplit(section.text, options.max_chars, options.overlap_chars)
-    for (const piece of sectionChunks) {
+    const adjustedChunks = enforceMinChunkSize(sectionChunks, options.min_chars)
+    for (const piece of adjustedChunks) {
       const tokenEstimate = estimateTokens(piece)
       chunks.push({
         text: piece,
@@ -175,6 +177,41 @@ function applyOverlap(previous: string, next: string, overlapChars: number, maxC
   }
 
   return next
+}
+
+function enforceMinChunkSize(chunks: string[], minChars: number): string[] {
+  if (chunks.length <= 1) {
+    return chunks
+  }
+
+  const merged: string[] = []
+  let buffer = ""
+
+  for (const chunk of chunks) {
+    if (!buffer) {
+      buffer = chunk
+      continue
+    }
+
+    if (buffer.length < minChars) {
+      buffer = buffer + "\n\n" + chunk
+      continue
+    }
+
+    merged.push(buffer)
+    buffer = chunk
+  }
+
+  if (buffer) {
+    if (merged.length > 0 && buffer.length < minChars) {
+      const lastIndex = merged.length - 1
+      merged[lastIndex] = merged[lastIndex] + "\n\n" + buffer
+    } else {
+      merged.push(buffer)
+    }
+  }
+
+  return merged
 }
 
 function estimateTokens(text: string): number {

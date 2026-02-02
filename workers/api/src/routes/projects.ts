@@ -1,20 +1,14 @@
-import { Env, IndexRequest, SourceType } from "../../../../packages/shared/src/types"
+import { Env, IndexRequest } from "../../../../packages/shared/src/types"
 
 /**
- * Routes project creation requests to JSON or multipart handlers.
+ * Routes project creation requests for GitHub sources.
  */
 export async function handleProjectCreate(request: Request, env: Env): Promise<Response> {
-  const contentType = request.headers.get("content-type") || ""
-
-  if (contentType.includes("multipart/form-data")) {
-    return handleMultipartProjectCreate(request, env)
-  }
-
   return handleJsonProjectCreate(request, env)
 }
 
 /**
- * Creates a project from a JSON payload for sitemap or GitHub sources.
+ * Creates a project from a JSON payload for a GitHub repo.
  */
 async function handleJsonProjectCreate(request: Request, env: Env): Promise<Response> {
   const body = await request.json()
@@ -24,26 +18,15 @@ async function handleJsonProjectCreate(request: Request, env: Env): Promise<Resp
 
   const payload = body as Record<string, unknown>
   const projectId = String(payload.project_id || "").trim()
-  const sourceType = payload.source_type
   const sourceRef = String(payload.source_ref || "").trim()
 
-  if (!projectId || !sourceType || !sourceRef) {
-    return jsonError("project_id, source_type, and source_ref are required", 400)
-  }
-
-  if (!isSourceType(sourceType)) {
-    return jsonError("source_type must be sitemap, github, or upload", 400)
-  }
-
-  const typedSourceType = sourceType as SourceType
-
-  if (sourceType === "upload") {
-    return jsonError("Upload requires multipart form data", 400)
+  if (!projectId || !sourceRef) {
+    return jsonError("project_id and source_ref are required", 400)
   }
 
   const created = await createProject(env, {
     project_id: projectId,
-    source_type: typedSourceType,
+    source_type: "github",
     source_ref: sourceRef,
   })
 
@@ -58,68 +41,6 @@ async function handleJsonProjectCreate(request: Request, env: Env): Promise<Resp
     void error
     return jsonError("Failed to start workflow", 500)
   }
-}
-
-/**
- * Creates a project from uploaded files via multipart form data.
- */
-async function handleMultipartProjectCreate(request: Request, env: Env): Promise<Response> {
-  const formData = await request.formData()
-  const projectId = String(formData.get("project_id") || "").trim()
-
-  if (!projectId) {
-    return jsonError("project_id is required", 400)
-  }
-
-  const uploadPrefix = "projects/" + projectId + "/uploads/"
-  const files = collectFiles(formData)
-
-  if (files.length === 0) {
-    return jsonError("No files provided", 400)
-  }
-
-  for (const file of files) {
-    const key = uploadPrefix + file.name
-    await env.DOCS_BUCKET.put(key, file)
-  }
-
-  const created = await createProject(env, {
-    project_id: projectId,
-    source_type: "upload",
-    source_ref: "r2://" + uploadPrefix,
-  })
-
-  if (!created.ok) {
-    return jsonError(created.error, created.status)
-  }
-
-  try {
-    const workflowId = await triggerWorkflow(env, created.indexRequest)
-    return jsonResponse({ project_id: projectId, workflow_id: workflowId })
-  } catch (error) {
-    void error
-    return jsonError("Failed to start workflow", 500)
-  }
-}
-
-/**
- * Collects all file fields from a multipart payload.
- */
-function collectFiles(formData: FormData): File[] {
-  const files: File[] = []
-  for (const value of formData.values()) {
-    if (value instanceof File) {
-      files.push(value)
-    }
-  }
-  return files
-}
-
-/**
- * Validates the supported source_type values.
- */
-function isSourceType(value: unknown): value is SourceType {
-  return value === "sitemap" || value === "github" || value === "upload"
 }
 
 /**
