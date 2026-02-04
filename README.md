@@ -28,7 +28,7 @@ wrangler r2 bucket create docs-lm
 
 5) Create the Vectorize index
 ```bash
-wrangler vectorize create docs_chunks --dimensions 768 --metric cosine
+wrangler vectorize create docs_chunks --dimensions 1024 --metric cosine
 ```
 
 6) Create the Vectorize metadata index for project filtering
@@ -36,8 +36,7 @@ wrangler vectorize create docs_chunks --dimensions 768 --metric cosine
 wrangler vectorize create-metadata-index docs_chunks --property-name=project_id --type=string
 ```
 
-7) Create the Workers AI binding (no extra setup needed)
-   - The `AI` binding is configured in `wrangler.jsonc` and uses Cloudflare Workers AI.
+7) Workers AI uses the `AI` binding configured in `wrangler.jsonc`
 
 ### Run locally (remote bindings enabled)
 ```bash

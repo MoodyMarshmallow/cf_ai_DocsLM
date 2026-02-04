@@ -3,7 +3,9 @@
 	"main": "workers/api/src/index.ts",
   "compatibility_date": "2026-02-01",
 	"vars": {
-		"ENVIRONMENT": "dev"
+		"ENVIRONMENT": "dev",
+		"EMBEDDING_MODEL": "@cf/qwen/qwen3-embedding-0.6b",
+		"CHAT_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8"
 	},
 	"d1_databases": [
 		{

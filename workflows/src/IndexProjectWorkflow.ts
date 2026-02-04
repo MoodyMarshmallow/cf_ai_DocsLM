@@ -5,8 +5,6 @@ import { sha256Hex } from "../../packages/shared/src/hash"
 import { normalizeHtmlToText, normalizeMarkdownToText } from "../../packages/shared/src/normalization"
 import { Env, IndexRequest } from "../../packages/shared/src/types"
 
-const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"
-
 export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> {
   /**
    * Runs the indexing workflow with durable steps for status, discovery, and processing.
@@ -462,7 +460,7 @@ async function processChunk(
  * Generates an embedding for the given text using Workers AI.
  */
 async function embedText(env: Env, text: string): Promise<number[]> {
-  const result = await env.AI.run(EMBEDDING_MODEL, { text: [text] })
+  const result = await env.AI.run(env.EMBEDDING_MODEL, { text: [text] })
   const parsed = result as { data?: number[][] }
   if (parsed && parsed.data && parsed.data[0]) {
     return parsed.data[0]

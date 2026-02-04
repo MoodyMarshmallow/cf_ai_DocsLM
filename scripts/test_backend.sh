@@ -6,32 +6,51 @@ BASE_URL="${BASE_URL:-http://localhost:8787}"
 PROJECT_ID="${PROJECT_ID:-sample-project}"
 SOURCE_REF="${SOURCE_REF:-https://github.com/zpqrtbnk/test-repo}"
 DB_NAME="${DB_NAME:-docs_lm}"
+CHAT_ONLY=false
+INDEX_ONLY=false
 
-echo "Using BASE_URL=${BASE_URL}"
-echo "Creating project ${PROJECT_ID}"
+for arg in "$@"; do
+  if [ "${arg}" = "--chat-only" ]; then
+    CHAT_ONLY=true
+  fi
+  if [ "${arg}" = "--index-only" ]; then
+    INDEX_ONLY=true
+  fi
+done
 
-create_response=$(curl -sS -X POST "${BASE_URL}/api/projects" \
-  -H "content-type: application/json" \
-  -d "{\"project_id\":\"${PROJECT_ID}\",\"source_ref\":\"${SOURCE_REF}\"}" \
-  -w "\n%{http_code}")
-
-create_body=$(printf "%s" "${create_response}" | head -n 1)
-create_status=$(printf "%s" "${create_response}" | tail -n 1)
-
-printf "%s\n" "${create_body}" | tee /tmp/docs_lm_project_create.json
-
-if [ "${create_status}" = "409" ]; then
-  echo "Project exists; deleting ${PROJECT_ID} and retrying"
-  npx wrangler d1 execute "${DB_NAME}" --remote --command "DELETE FROM chat_logs WHERE project_id = '${PROJECT_ID}'; DELETE FROM chunks WHERE project_id = '${PROJECT_ID}'; DELETE FROM documents WHERE project_id = '${PROJECT_ID}'; DELETE FROM projects WHERE project_id = '${PROJECT_ID}';"
-
-  echo "Creating project ${PROJECT_ID}"
-  curl -sS -X POST "${BASE_URL}/api/projects" \
-    -H "content-type: application/json" \
-    -d "{\"project_id\":\"${PROJECT_ID}\",\"source_ref\":\"${SOURCE_REF}\"}" \
-    | tee /tmp/docs_lm_project_create.json
+if [ "${CHAT_ONLY}" = "true" ] && [ "${INDEX_ONLY}" = "true" ]; then
+  echo "Cannot use --chat-only and --index-only together"
+  exit 1
 fi
 
-echo "Checking indexing status"
+echo "Using BASE_URL=${BASE_URL}"
+if [ "${CHAT_ONLY}" = "false" ]; then
+  echo "Creating project ${PROJECT_ID}"
+
+  create_response=$(curl -sS -X POST "${BASE_URL}/api/projects" \
+    -H "content-type: application/json" \
+    -d "{\"project_id\":\"${PROJECT_ID}\",\"source_ref\":\"${SOURCE_REF}\"}" \
+    -w "\n%{http_code}")
+
+  create_body=$(printf "%s" "${create_response}" | head -n 1)
+  create_status=$(printf "%s" "${create_response}" | tail -n 1)
+
+  printf "%s\n" "${create_body}" | tee /tmp/docs_lm_project_create.json
+
+  if [ "${create_status}" = "409" ]; then
+    echo "Project exists; deleting ${PROJECT_ID} and retrying"
+    npx wrangler d1 execute "${DB_NAME}" --remote --command "DELETE FROM chat_logs WHERE project_id = '${PROJECT_ID}'; DELETE FROM chunks WHERE project_id = '${PROJECT_ID}'; DELETE FROM documents WHERE project_id = '${PROJECT_ID}'; DELETE FROM projects WHERE project_id = '${PROJECT_ID}';"
+
+    echo "Creating project ${PROJECT_ID}"
+    curl -sS -X POST "${BASE_URL}/api/projects" \
+      -H "content-type: application/json" \
+      -d "{\"project_id\":\"${PROJECT_ID}\",\"source_ref\":\"${SOURCE_REF}\"}" \
+      | tee /tmp/docs_lm_project_create.json
+  fi
+fi
+
+if [ "${CHAT_ONLY}" = "false" ]; then
+  echo "Checking indexing status"
 
 status=""
 attempts=0
@@ -51,15 +70,18 @@ while [ "${attempts}" -lt "${max_attempts}" ]; do
   sleep 2
 done
 
-if [ "${status}" != "ready" ]; then
-  echo "Index not ready after waiting. Proceeding with chat may fail."
+  if [ "${status}" != "ready" ]; then
+    echo "Index not ready after waiting. Proceeding with chat may fail."
+  fi
 fi
 
-echo "Sending chat query"
+if [ "${INDEX_ONLY}" = "false" ]; then
+  echo "Sending chat query"
 
-curl -sS -X POST "${BASE_URL}/api/chat" \
-  -H "content-type: application/json" \
-  -d "{\"project_id\":\"${PROJECT_ID}\",\"message\":\"How do I get started?\"}" \
-  | tee /tmp/docs_lm_chat.json
+  curl -sS -X POST "${BASE_URL}/api/chat" \
+    -H "content-type: application/json" \
+    -d "{\"project_id\":\"${PROJECT_ID}\",\"message\":\"Please could you tell me what this repo is about?\"}" \
+    | tee /tmp/docs_lm_chat.json
+fi
 
 echo "Done"

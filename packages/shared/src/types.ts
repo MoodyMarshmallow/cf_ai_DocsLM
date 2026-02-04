@@ -8,6 +8,8 @@ export interface Env {
   CHAT_SESSIONS: DurableObjectNamespace
   WORKFLOWS: WorkflowsBinding
   ENVIRONMENT: string
+  EMBEDDING_MODEL: string
+  CHAT_MODEL: string
 }
 
 export interface D1Database {

@@ -27,9 +27,6 @@ interface DurableObjectStorage {
   put<T = unknown>(key: string, value: T): Promise<void>
 }
 
-const EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"
-const CHAT_MODEL = "@cf/meta/llama-3.1-8b-instruct"
-
 export class ChatSessionDO {
   private state: DurableObjectState
   private env: Env
@@ -129,14 +126,12 @@ export class ChatSessionDO {
     }
 
     const messages = buildMessages(session, request, retrieval.context)
-    const result = await this.env.AI.run(CHAT_MODEL, { messages: messages })
-    const parsed = result as { response?: string }
-    if (parsed && parsed.response) {
-      return String(parsed.response)
+    const result = await this.env.AI.run(this.env.CHAT_MODEL, { messages: messages })
+    const extracted = extractChatContent(result)
+    if (extracted) {
+      return extracted
     }
-    if (typeof result === "string") {
-      return result
-    }
+    logChatResult(result)
     return "The model did not return a response."
   }
 }
@@ -164,8 +159,7 @@ function parseChatRequest(
 }
 
 async function embedText(env: Env, text: string): Promise<number[]> {
-  console.log('embedding text: ' + text)
-  const result = await env.AI.run(EMBEDDING_MODEL, { text: [text] })
+  const result = await env.AI.run(env.EMBEDDING_MODEL, { text: [text] })
   const parsed = result as { data?: number[][] }
   if (parsed && parsed.data && parsed.data[0]) {
     return parsed.data[0]
@@ -256,6 +250,45 @@ function logRetrievalContext(
     citations: retrieval.citations.length,
     preview: preview,
   })
+}
+
+function logChatResult(result: unknown): void {
+  let message = "[chat] chat result: "
+  if (typeof result === "string") {
+    message += result
+  } else {
+    try {
+      message += JSON.stringify(result)
+    } catch (error) {
+      void error
+      message += "[unserializable result]"
+    }
+  }
+  console.log(message)
+}
+
+function extractChatContent(result: unknown): string | null {
+  if (typeof result === "string") {
+    return result
+  }
+  if (!result || typeof result !== "object") {
+    return null
+  }
+
+  const payload = result as {
+    response?: string
+    choices?: Array<{ message?: { content?: string } }>
+  }
+
+  if (payload.response) {
+    return String(payload.response)
+  }
+
+  if (payload.choices && payload.choices[0] && payload.choices[0].message?.content) {
+    return String(payload.choices[0].message.content)
+  }
+
+  return null
 }
 
 function jsonResponse(payload: unknown): Response {
