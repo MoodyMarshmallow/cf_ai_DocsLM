@@ -13,39 +13,39 @@
 
 2) Create the D1 database (if not already created)
 ```bash
-wrangler d1 create docs_lm
+npx wrangler d1 create docs_lm
 ```
 
 3) Apply the D1 migration
 ```bash
-wrangler d1 execute docs_lm --file migrations/0001_init.sql
+npx wrangler d1 execute docs_lm --file migrations/0001_init.sql
 ```
 
 4) Create the R2 bucket
 ```bash
-wrangler r2 bucket create docs-lm
+npx wrangler r2 bucket create docs-lm
 ```
 
 5) Create the Vectorize index
 ```bash
-wrangler vectorize create docs_chunks --dimensions 1024 --metric cosine
+npx wrangler vectorize create docs_chunks --dimensions 1024 --metric cosine
 ```
 
 6) Create the Vectorize metadata index for project filtering
 ```bash
-wrangler vectorize create-metadata-index docs_chunks --property-name=project_id --type=string
+npx wrangler vectorize create-metadata-index docs_chunks --property-name=project_id --type=string
 ```
 
 7) Workers AI uses the `AI` binding configured in `wrangler.jsonc`
 
 ### Run locally (remote bindings enabled)
 ```bash
-wrangler dev --config wrangler.jsonc
+npx wrangler dev --config wrangler.jsonc
 ```
 
 ### Full remote dev (Worker runs on Cloudflare)
 ```bash
-wrangler dev --remote --config wrangler.jsonc
+npx wrangler dev --remote --config wrangler.jsonc
 ```
 
 ### Example requests
