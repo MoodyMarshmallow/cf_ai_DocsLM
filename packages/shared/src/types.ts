@@ -26,7 +26,8 @@ export interface D1PreparedStatement {
 export interface R2Bucket {
   put(key: string, value: string | ReadableStream | ArrayBuffer | Blob): Promise<void>
   get(key: string): Promise<R2ObjectBody | null>
-  list(options: { prefix: string }): Promise<R2ObjectsList>
+  list(options: { prefix: string; cursor?: string }): Promise<R2ObjectsList>
+  delete(key: string): Promise<void>
 }
 
 export interface R2ObjectBody {
@@ -36,6 +37,7 @@ export interface R2ObjectBody {
 
 export interface R2ObjectsList {
   objects: Array<{ key: string }>
+  cursor?: string
 }
 
 export interface DurableObjectNamespace {
@@ -55,7 +57,9 @@ export interface WorkersAIBinding {
 
 export interface VectorizeBinding {
   query?: (vector: number[], options: VectorizeQueryOptions) => Promise<VectorizeQueryResult>
-  upsert?: (vectors: VectorizeUpsertItem[]) => Promise<void>
+  upsert?: (vectors: VectorizeUpsertItem[]) => Promise<VectorizeAsyncMutation>
+  deleteByIds?: (ids: string[]) => Promise<void>
+  describe?: () => Promise<VectorizeIndexInfo>
 }
 
 export interface VectorizeQueryOptions {
@@ -65,6 +69,13 @@ export interface VectorizeQueryOptions {
 
 export interface VectorizeQueryResult {
   matches?: VectorizeMatch[]
+}
+
+export interface VectorizeIndexInfo {
+  vectorCount: number
+  dimensions: number
+  processedUpToDatetime: number
+  processedUpToMutation: string
 }
 
 export interface VectorizeMatch {
@@ -78,12 +89,18 @@ export interface VectorizeUpsertItem {
   metadata?: Record<string, string>
 }
 
+export interface VectorizeAsyncMutation {
+  mutationId: string
+}
+
 export interface WorkflowsBinding {
   create?: (input: { id?: string; params: IndexRequest }) => Promise<{ id?: string }>
 }
 
 export interface Project {
   project_id: string
+  name: string
+  name_lower: string
   source_type: SourceType
   source_ref: string
   status: string
@@ -136,4 +153,6 @@ export interface IndexRequest {
   project_id: string
   source_type: SourceType
   source_ref: string
+  name?: string
+  name_lower?: string
 }

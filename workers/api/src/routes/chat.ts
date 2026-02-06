@@ -7,6 +7,14 @@ export async function handleChat(request: Request, env: Env): Promise<Response> 
     return jsonError(parsed.error, 400)
   }
 
+  const status = await getProjectStatus(env, parsed.value.project_id)
+  if (!status.ok) {
+    return jsonError(status.error, status.status)
+  }
+  if (status.value !== "ready") {
+    return jsonError("Project indexing not complete", 409)
+  }
+
   const sessionId = parsed.value.session_id || crypto.randomUUID()
   const doId = env.CHAT_SESSIONS.idFromName(sessionId)
   const stub = env.CHAT_SESSIONS.get(doId)
@@ -62,4 +70,18 @@ function jsonError(message: string, status: number): Response {
       "content-type": "application/json",
     },
   })
+}
+
+async function getProjectStatus(
+  env: Env,
+  projectId: string,
+): Promise<{ ok: true; value: string } | { ok: false; error: string; status: number }> {
+  const statement = env.DB.prepare(
+    "SELECT status FROM projects WHERE project_id = ?",
+  )
+  const result = await statement.bind(projectId).first<{ status?: string }>()
+  if (!result || !result.status) {
+    return { ok: false, error: "Project not found", status: 404 }
+  }
+  return { ok: true, value: result.status }
 }

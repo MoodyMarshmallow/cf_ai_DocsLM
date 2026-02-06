@@ -8,7 +8,16 @@ import { defineConfig } from "eslint/config";
 const jsonPlugin = json as unknown as Record<string, unknown>;
 
 export default defineConfig([
-  { ignores: ["package-lock.json", "worker-configuration.d.ts", ".wrangler/**"] },
+  {
+    ignores: [
+      "package-lock.json",
+      "apps/web/package-lock.json",
+      "apps/web/tsconfig*.json",
+      "worker-configuration.d.ts",
+      ".wrangler/**",
+      "apps/**"
+    ],
+  },
   {
     files: ["**/*.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
     plugins: { js },
@@ -23,6 +32,9 @@ export default defineConfig([
       react: {
         version: "19.0.0",
       },
+    },
+    rules: {
+      "react/react-in-jsx-scope": "off",
     },
   },
   { files: ["**/*.json"], plugins: { json: jsonPlugin }, language: "json/json", extends: ["json/recommended"] },

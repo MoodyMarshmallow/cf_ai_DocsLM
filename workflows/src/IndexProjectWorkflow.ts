@@ -15,6 +15,7 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
       const env = this.env
       const maxChunks = 500
       let remainingChunks = maxChunks
+      let lastMutationId: string | null = null
       await step.do("mark project indexing", async function () {
         await markProjectStatus(env, input, "indexing")
       })
@@ -36,12 +37,22 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
           return processSource(env, input, source, remainingChunks)
         })
 
-        remainingChunks = Math.max(0, remainingChunks - processed)
+        remainingChunks = Math.max(0, remainingChunks - processed.count)
+        if (processed.lastMutationId) {
+          lastMutationId = processed.lastMutationId
+        }
+      }
+
+      if (lastMutationId) {
+        await step.do("wait for vectorize", async function () {
+          await waitForVectorizeMutation(env, lastMutationId)
+        })
       }
 
       await step.do("mark project ready", async function () {
         await markProjectStatus(env, input, "ready")
       })
+      console.log("[indexing] project complete", { project_id: input.project_id })
     } catch (error) {
       void error
       await markProjectStatus(this.env, event.payload, "failed")
@@ -123,7 +134,7 @@ async function fetchGithubContent(apiUrl: string): Promise<string | null> {
   if (!response.ok) {
     return null
   }
-  const data = await response.json()
+  const data = (await response.json()) as { download_url?: string }
   if (data && data.download_url) {
     return data.download_url
   }
@@ -158,7 +169,7 @@ async function fetchGithubDefaultBranch(owner: string, repo: string): Promise<st
   if (!response.ok) {
     return null
   }
-  const data = await response.json()
+  const data = (await response.json()) as { default_branch?: string }
   if (data && data.default_branch) {
     return String(data.default_branch)
   }
@@ -176,7 +187,7 @@ async function fetchGithubTree(
   if (!response.ok) {
     return null
   }
-  const data = await response.json()
+  const data = (await response.json()) as { tree?: GithubTreeItem[]; truncated?: boolean }
   if (!data || !Array.isArray(data.tree)) {
     return null
   }
@@ -338,19 +349,19 @@ async function processSource(
   input: IndexRequest,
   source: SourceItem,
   remainingChunks: number,
-): Promise<number> {
+): Promise<{ count: number; lastMutationId: string | null }> {
   if (remainingChunks <= 0) {
-    return 0
+    return { count: 0, lastMutationId: null }
   }
 
-  const fetchResult = await fetchSource(env, source)
+  const fetchResult = await fetchSource(env, source, input.project_id)
   if (!fetchResult.ok) {
-    return 0
+    return { count: 0, lastMutationId: null }
   }
 
   const normalized = normalizeContent(fetchResult)
   if (!normalized.ok) {
-    return 0
+    return { count: 0, lastMutationId: null }
   }
 
   logContentPreview(input.project_id, fetchResult.url, normalized.text)
@@ -373,17 +384,21 @@ async function processSource(
 
   const chunks = chunkText(normalized.text, { max_chars: 8000, overlap_chars: 800, min_chars: 500 })
   const cappedChunks = chunks.slice(0, Math.max(0, remainingChunks))
+  let lastMutationId: string | null = null
   for (const chunk of cappedChunks) {
-    await processChunk(env, input, document, chunk)
+    const mutationId = await processChunk(env, input, document, chunk)
+    if (mutationId) {
+      lastMutationId = mutationId
+    }
   }
 
-  return cappedChunks.length
+  return { count: cappedChunks.length, lastMutationId: lastMutationId }
 }
 
 /**
  * Loads a source document from R2 or HTTP and stores raw content in R2.
  */
-async function fetchSource(env: Env, source: SourceItem): Promise<FetchResult> {
+async function fetchSource(env: Env, source: SourceItem, projectId: string): Promise<FetchResult> {
   const response = await fetch(source.url)
   if (!response.ok) {
     return { ok: false, error: "Failed to fetch source" }
@@ -391,7 +406,7 @@ async function fetchSource(env: Env, source: SourceItem): Promise<FetchResult> {
   const contentType = response.headers.get("content-type") || "text/plain"
   const rawText = await response.text()
 
-  const rawKey = "raw/" + encodeURIComponent(source.url)
+  const rawKey = "projects/" + projectId + "/raw/" + encodeURIComponent(source.url)
   await env.DOCS_BUCKET.put(rawKey, rawText)
 
   return {
@@ -432,11 +447,11 @@ async function processChunk(
   input: IndexRequest,
   document: DocumentInsert,
   chunk: { text: string; heading_path?: string; chunk_index: number; token_estimate: number },
-): Promise<void> {
+): Promise<string | null> {
   const chunkId = await sha256Hex(document.doc_id + String(chunk.chunk_index))
   const vector = await embedText(env, chunk.text)
 
-  await upsertVector(env, chunkId, vector, {
+  const mutationId = await upsertVector(env, chunkId, vector, {
     project_id: input.project_id,
     doc_id: document.doc_id,
     url: document.url,
@@ -454,17 +469,28 @@ async function processChunk(
     content_hash: await sha256Hex(chunk.text),
     token_estimate: chunk.token_estimate,
   })
+
+  return mutationId
 }
 
 /**
  * Generates an embedding for the given text using Workers AI.
  */
 async function embedText(env: Env, text: string): Promise<number[]> {
+  if (!env.AI) {
+    console.warn("[indexing] embedding skipped", { reason: "binding unavailable" })
+    return []
+  }
+  if (!env.AI.run) {
+    console.warn("[indexing] embedding skipped", { reason: "run not available on binding" })
+    return []
+  }
   const result = await env.AI.run(env.EMBEDDING_MODEL, { text: [text] })
   const parsed = result as { data?: number[][] }
   if (parsed && parsed.data && parsed.data[0]) {
     return parsed.data[0]
   }
+  console.warn("[indexing] embedding missing", { reason: "no data returned" })
   return []
 }
 
@@ -476,11 +502,57 @@ async function upsertVector(
   chunkId: string,
   vector: number[],
   metadata: Record<string, string>,
-): Promise<void> {
-  if (!env.VECTORIZE_INDEX || !env.VECTORIZE_INDEX.upsert) {
+): Promise<string | null> {
+  if (!env.VECTORIZE_INDEX) {
+    console.warn("[indexing] vector upsert skipped", { reason: "binding unavailable" })
+    return null
+  }
+
+  if (!env.VECTORIZE_INDEX.upsert) {
+    console.warn("[indexing] vector upsert skipped", {
+      reason: "upsert not available on binding",
+    })
+    return null
+  }
+
+  const result = await env.VECTORIZE_INDEX.upsert([
+    { id: chunkId, values: vector, metadata: metadata },
+  ])
+  console.log("[indexing] vector upserted", { id: chunkId })
+  if (result && result.mutationId) {
+    return result.mutationId
+  }
+  return null
+}
+
+async function waitForVectorizeMutation(env: Env, mutationId: string): Promise<void> {
+  if (!env.VECTORIZE_INDEX) {
+    console.warn("[indexing] mutation wait skipped", { reason: "binding unavailable" })
     return
   }
-  await env.VECTORIZE_INDEX.upsert([{ id: chunkId, values: vector, metadata: metadata }])
+  if (!env.VECTORIZE_INDEX.describe) {
+    console.warn("[indexing] mutation wait skipped", { reason: "describe not available on binding" })
+    return
+  }
+
+  const maxAttempts = 60
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const info = await env.VECTORIZE_INDEX.describe()
+    if (info && info.processedUpToMutation === mutationId) {
+      console.log("[indexing] vectorize mutation processed", { mutation_id: mutationId })
+      return
+    }
+    console.log("[indexing] vectorize mutation polled", { mutation_id: mutationId, processedUpToMutation: info.processedUpToMutation, vectorCount: info.vectorCount})
+    await sleep(5000)
+  }
+
+  console.warn("[indexing] vectorize mutation wait timed out", { mutation_id: mutationId })
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms)
+  })
 }
 
 /**

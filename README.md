@@ -11,17 +11,17 @@
    - Replace `REPLACE_WITH_D1_ID`
    - Ensure the R2 bucket and Vectorize index exist
 
-2) Create the D1 database (if not already created)
+2) Create the D1 database (if not already created). Make sure you say yes to using the remote server.
 ```bash
 npx wrangler d1 create docs_lm
 ```
 
 3) Apply the D1 migration
 ```bash
-npx wrangler d1 execute docs_lm --file migrations/0001_init.sql
+npx wrangler d1 execute docs_lm --file migrations/0001_init.sql --remote
 ```
 
-4) Create the R2 bucket
+4) Create the R2 bucket Make sure you say yes to using the remote server.
 ```bash
 npx wrangler r2 bucket create docs-lm
 ```
@@ -48,12 +48,33 @@ npx wrangler dev --config wrangler.jsonc
 npx wrangler dev --remote --config wrangler.jsonc
 ```
 
+## Frontend (Vite + React)
+
+### Run locally
+```bash
+cd apps/web
+npm install
+npm run dev
+```
+
+Optional API base override:
+```bash
+VITE_API_BASE=http://127.0.0.1:8787 npm run dev
+```
+
 ### Example requests
 Create a project from a GitHub repo:
 ```bash
 curl -X POST http://127.0.0.1:8787/api/projects \
   -H "content-type: application/json" \
-  -d '{"project_id":"my-project","source_ref":"https://github.com/org/repo"}'
+  -d '{"name":"My Project","source_ref":"https://github.com/org/repo"}'
+```
+Note: project names must be alphanumeric with spaces or dashes.
+The response includes a generated `project_id` (ULID).
+
+List projects:
+```bash
+curl http://127.0.0.1:8787/api/projects
 ```
 
 Check indexing status:

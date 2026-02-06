@@ -1,34 +1,12 @@
 {
 	"name": "docs-lm",
 	"main": "workers/api/src/index.ts",
-  "compatibility_date": "2026-02-01",
+	"compatibility_date": "2026-02-01",
 	"vars": {
 		"ENVIRONMENT": "dev",
 		"EMBEDDING_MODEL": "@cf/qwen/qwen3-embedding-0.6b",
 		"CHAT_MODEL": "@cf/qwen/qwen3-30b-a3b-fp8"
 	},
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "docs_lm",
-			"database_id": "962a4df0-336c-4605-8e36-73810a736108",
-			"remote": true
-		}
-	],
-	"r2_buckets": [
-		{
-			"binding": "DOCS_BUCKET",
-			"bucket_name": "docs-lm",
-			"remote": true
-		}
-	],
-	"vectorize": [
-		{
-			"binding": "VECTORIZE_INDEX",
-			"index_name": "docs_chunks",
-			"remote": true
-		}
-	],
 	"durable_objects": {
 		"bindings": [
 			{
@@ -37,13 +15,13 @@
 			}
 		]
 	},
-  "workflows": [
-    {
-      "name": "IndexProjectWorkflow",
-      "class_name": "IndexProjectWorkflow",
-      "binding": "WORKFLOWS"
-    }
-  ],
+	"workflows": [
+		{
+			"name": "IndexProjectWorkflow",
+			"class_name": "IndexProjectWorkflow",
+			"binding": "WORKFLOWS"
+		}
+	],
 	"migrations": [
 		{
 			"tag": "v1",
@@ -55,5 +33,27 @@
 	"ai": {
 		"binding": "AI",
 		"remote": true
-	}
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "docs_lm",
+			"database_id": "611444fb-f23d-44cb-af6b-7d3b8b247d63",
+			"remote": true
+		}
+	],
+	"r2_buckets": [
+		{
+			"bucket_name": "docs-lm",
+			"binding": "DOCS_BUCKET",
+			"remote": true
+		}
+	],
+	"vectorize": [
+		{
+			"binding": "VECTORIZE_INDEX",
+			"index_name": "docs_chunks",
+			"remote": true
+		}
+	]
 }

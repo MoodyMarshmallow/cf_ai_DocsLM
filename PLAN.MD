@@ -70,7 +70,9 @@ The system uses a mix of D1, Vectorize, R2, and Durable Objects storage to meet 
 ```ts
 const D1_TABLES = {
     "projects": [
-        "project_id (human-readable name, unique)",
+        "project_id (ulid)",
+        "name (unique, case-insensitive)",
+        "name_lower",
         "source_type",
         "source_ref",
         "status",
@@ -215,7 +217,6 @@ Ingestion and indexing
 Chat and retrieval
 - No matching chunks: return a grounded "not found" response with guidance
 - DO eviction: recover from DO storage and continue session
-- Workers AI chat/embedding limits: return friendly error, recommend retry or smaller input
 - Large projects: cap chunk count, paginate retrieval, or store chunk text in R2
 
 Security and abuse

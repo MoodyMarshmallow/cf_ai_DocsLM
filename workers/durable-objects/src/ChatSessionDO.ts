@@ -94,6 +94,11 @@ export class ChatSessionDO {
       project_id: session.project_id || request.project_id,
     })
 
+    console.log("[chat] vectorize matches", {
+      project_id: session.project_id || request.project_id,
+      match_count: matches.length,
+    })
+
     if (matches.length === 0) {
       return { context: "", citations: [] }
     }
@@ -103,6 +108,10 @@ export class ChatSessionDO {
     })
 
     const rows = await fetchChunksByIds(this.env, chunkIds)
+    console.log("[chat] chunk fetch", {
+      chunk_ids: chunkIds.length,
+      rows: rows.length,
+    })
     const citations = rows.map(function (row) {
       return { url: row.url, heading_path: row.heading_path || undefined }
     })
@@ -126,6 +135,14 @@ export class ChatSessionDO {
     }
 
     const messages = buildMessages(session, request, retrieval.context)
+    if (!this.env.AI) {
+      console.warn("[chat] ai run skipped", { reason: "binding unavailable" })
+      return "The model did not return a response."
+    }
+    if (!this.env.AI.run) {
+      console.warn("[chat] ai run skipped", { reason: "run not available on binding" })
+      return "The model did not return a response."
+    }
     const result = await this.env.AI.run(this.env.CHAT_MODEL, { messages: messages })
     const extracted = extractChatContent(result)
     if (extracted) {
@@ -159,11 +176,20 @@ function parseChatRequest(
 }
 
 async function embedText(env: Env, text: string): Promise<number[]> {
+  if (!env.AI) {
+    console.warn("[chat] embedding skipped", { reason: "binding unavailable" })
+    return []
+  }
+  if (!env.AI.run) {
+    console.warn("[chat] embedding skipped", { reason: "run not available on binding" })
+    return []
+  }
   const result = await env.AI.run(env.EMBEDDING_MODEL, { text: [text] })
   const parsed = result as { data?: number[][] }
   if (parsed && parsed.data && parsed.data[0]) {
     return parsed.data[0]
   }
+  console.warn("[chat] embedding missing", { reason: "no data returned" })
   return []
 }
 
@@ -172,7 +198,13 @@ async function queryVectorize(
   vector: number[],
   filters: { project_id: string },
 ): Promise<VectorizeMatch[]> {
-  if (!env.VECTORIZE_INDEX || !env.VECTORIZE_INDEX.query) {
+  if (!env.VECTORIZE_INDEX) {
+    console.warn("[chat] vector query skipped", {reason: "binding not available"})
+    return []
+  }
+
+  if (!env.VECTORIZE_INDEX.query) {
+    console.warn("[chat] vector query skipped", {reason: "query function not available on binding"})
     return []
   }
 
@@ -184,6 +216,13 @@ async function queryVectorize(
     topK: 6,
     filter: filter,
   })) as VectorizeQueryResult
+
+  try {
+    console.log("[chat] vectorize result", JSON.stringify(result))
+  } catch (error) {
+    void error
+    console.log("[chat] vectorize result", "[unserializable]")
+  }
 
   if (result && result.matches) {
     return result.matches

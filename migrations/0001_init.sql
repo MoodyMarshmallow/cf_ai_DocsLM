@@ -1,5 +1,7 @@
 CREATE TABLE IF NOT EXISTS projects (
   project_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  name_lower TEXT NOT NULL,
   source_type TEXT NOT NULL,
   source_ref TEXT NOT NULL,
   status TEXT NOT NULL,
@@ -42,3 +44,4 @@ CREATE TABLE IF NOT EXISTS chat_logs (
 
 CREATE INDEX IF NOT EXISTS idx_documents_project ON documents (project_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_project ON chunks (project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_name_lower ON projects (name_lower);

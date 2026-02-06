@@ -74,7 +74,7 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - `camelCase` for variables, functions, and object properties.
 - `PascalCase` for classes and types.
 - `UPPER_SNAKE_CASE` for constants that are truly constant (e.g., model IDs).
-- Keep naming aligned with domain concepts: `project_id`, `doc_id`, `chunk_id`, `session_id`.
+- Keep naming aligned with domain concepts: `project_id` (ULID), `name` (unique, case-insensitive), `doc_id`, `chunk_id`, `session_id`.
 
 ### Types and interfaces
 - Define shared types in `packages/shared/src/types.ts`.
@@ -89,6 +89,7 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - Use explicit `try/catch` blocks around persistence and external API calls.
 - Avoid swallowing errors silently; set `projects.status` to `failed` if ingestion fails.
 - For unsupported content types (e.g., PDF), return a clear stub message and skip indexing.
+- Reject project names containing special characters; allow letters, numbers, spaces, and dashes only.
 
 ### Separation of concerns
 - HTTP routes should parse/validate input and delegate to helpers.
@@ -119,7 +120,10 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - Chunk budget is capped per project (500 total), and higher-scoring files are processed first.
 
 ### API behavior
-- `POST /api/projects` creates a project from a GitHub repo URL and triggers indexing.
+- `POST /api/projects` creates a project from a GitHub repo URL and triggers indexing. Accepts `{ name, source_ref }`.
+- `GET /api/projects` lists projects for the UI.
+- `PATCH /api/projects/:project_id` updates name or source_ref; source_ref updates trigger reindex.
+- `DELETE /api/projects/:project_id` purges D1 rows, Vectorize vectors, and R2 objects.
 - `POST /api/index/start` triggers an indexing workflow for an existing project.
 - `GET /api/index/status` returns the project status.
 - `POST /api/chat` forwards to the session Durable Object.
@@ -132,6 +136,12 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - Remote bindings are enabled per binding (see `wrangler.jsonc`).
 - `dev.remote` is not a valid Wrangler field; use per-binding `remote: true` or `wrangler dev --remote`.
 - Vectorize filters require metadata indexes (create `project_id` metadata index before filtering).
+
+## Common Pitfalls and Lessons Learned
+### Binding API usage
+- Do not guess binding method names; verify against official docs or generated typings (`worker-configuration.d.ts`).
+- When a binding is optional in local dev, add explicit guards and informative logs.
+- If a method is not present in types, confirm with docs before widening types.
 
 ## Security and Secrets
 - Do not log secrets or request bodies containing credentials.

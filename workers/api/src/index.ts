@@ -1,6 +1,11 @@
 import { handleChat } from "./routes/chat"
 import { handleIndexStart, handleIndexStatus } from "./routes/indexing"
-import { handleProjectCreate } from "./routes/projects"
+import {
+  handleProjectCreate,
+  handleProjectDelete,
+  handleProjectList,
+  handleProjectUpdate,
+} from "./routes/projects"
 import { Env } from "../../../packages/shared/src/types"
 
 export default {
@@ -20,8 +25,20 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return handleChat(request, env)
   }
 
+  if (path === "/api/projects" && request.method === "GET") {
+    return handleProjectList(request, env)
+  }
+
   if (path === "/api/projects" && request.method === "POST") {
     return handleProjectCreate(request, env)
+  }
+
+  if (path.startsWith("/api/projects/") && request.method === "PATCH") {
+    return handleProjectUpdate(request, env)
+  }
+
+  if (path.startsWith("/api/projects/") && request.method === "DELETE") {
+    return handleProjectDelete(request, env)
   }
 
   if (path === "/api/index/start" && request.method === "POST") {
