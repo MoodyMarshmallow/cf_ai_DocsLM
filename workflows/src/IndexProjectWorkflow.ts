@@ -44,9 +44,16 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
       }
 
       if (lastMutationId) {
-        await step.do("wait for vectorize", async function () {
-          await waitForVectorizeMutation(env, lastMutationId)
+        const ready = await step.do("wait for vectorize", async function () {
+          return waitForVectorizeMutation(env, lastMutationId)
         })
+        if (!ready) {
+          console.error("[indexing] vectorize mutation timeout", {
+            project_id: input.project_id,
+            mutation_id: lastMutationId,
+          })
+          return
+        }
       }
 
       await step.do("mark project ready", async function () {
@@ -525,14 +532,14 @@ async function upsertVector(
   return null
 }
 
-async function waitForVectorizeMutation(env: Env, mutationId: string): Promise<void> {
+async function waitForVectorizeMutation(env: Env, mutationId: string): Promise<boolean> {
   if (!env.VECTORIZE_INDEX) {
     console.warn("[indexing] mutation wait skipped", { reason: "binding unavailable" })
-    return
+    return false
   }
   if (!env.VECTORIZE_INDEX.describe) {
     console.warn("[indexing] mutation wait skipped", { reason: "describe not available on binding" })
-    return
+    return false
   }
 
   const maxAttempts = 60
@@ -540,13 +547,14 @@ async function waitForVectorizeMutation(env: Env, mutationId: string): Promise<v
     const info = await env.VECTORIZE_INDEX.describe()
     if (info && info.processedUpToMutation === mutationId) {
       console.log("[indexing] vectorize mutation processed", { mutation_id: mutationId })
-      return
+      return true
     }
     console.log("[indexing] vectorize mutation polled", { mutation_id: mutationId, processedUpToMutation: info.processedUpToMutation, vectorCount: info.vectorCount})
     await sleep(5000)
   }
 
-  console.warn("[indexing] vectorize mutation wait timed out", { mutation_id: mutationId })
+  console.error("[indexing] vectorize mutation wait timed out", { mutation_id: mutationId })
+  return false
 }
 
 function sleep(ms: number): Promise<void> {
