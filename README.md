@@ -1,96 +1,95 @@
-# cf_ai_DocsLM
+# DocsLM
 
-## Backend (Cloudflare Workers)
+DocsLM turns a public GitHub repository into a project-scoped chat experience.
+
+It indexes repo files, stores chunk metadata in D1, raw content in R2, vectors in Vectorize, and serves chat through a Durable Object with retrieval scoped by `project_id`.
+
+## What It Does Today
+
+- Create, list, rename, and delete projects.
+- Index public GitHub repositories (README/docs/code text files).
+- Chunk content, embed with Workers AI, and upsert vectors to Vectorize.
+- Chat with citations against indexed project content.
+- Manage multiple chat sessions per project.
+- Stream chat responses to the frontend.
+
+## Architecture
+
+- Worker API: `workers/api/src/index.ts`
+- Durable Object chat runtime: `workers/durable-objects/src/ChatSessionDO.ts`
+- Indexing workflow: `workflows/src/IndexProjectWorkflow.ts`
+- Shared types/utilities: `packages/shared/src/*`
+
+## Run Locally
 
 ### Prerequisites
+
 - Node.js 18+
-- Cloudflare account and `wrangler` installed
+- Cloudflare account
+- `wrangler` CLI
 
-### Setup
-1) Configure bindings in `wrangler.jsonc`
-   - Replace `REPLACE_WITH_D1_ID`
-   - Ensure the R2 bucket and Vectorize index exist
+### 1) Install dependencies
 
-2) Create the D1 database (if not already created). Make sure you say yes to using the remote server.
+```bash
+npm install
+cd apps/web && npm install
+```
+
+### 2) Create Cloudflare resources
+First create the d1 database. When you run this, take note of the new `database_id` and replace the old one in `wrangler.jsonc` in `d1_databases`. Don't let wrangler write anything to `wrangler.jsonc` for you, it's already written.
+
 ```bash
 npx wrangler d1 create docs_lm
 ```
 
-3) Apply the D1 migration
-```bash
-npx wrangler d1 execute docs_lm --file migrations/0001_init.sql --remote
-npx wrangler d1 execute docs_lm --file migrations/0002_chat_sessions.sql --remote
-```
 
-4) Create the R2 bucket Make sure you say yes to using the remote server.
+Then run these. Once again, don't let wrangler write anything to `wrangler.jsonc`.
+
 ```bash
 npx wrangler r2 bucket create docs-lm
-```
-
-5) Create the Vectorize index
-```bash
 npx wrangler vectorize create docs_chunks --dimensions 1024 --metric cosine
-```
-
-6) Create the Vectorize metadata index for project filtering
-```bash
 npx wrangler vectorize create-metadata-index docs_chunks --property-name=project_id --type=string
 ```
 
-7) Workers AI uses the `AI` binding configured in `wrangler.jsonc`
+### 3) Apply migrations
 
-### Run locally (remote bindings enabled)
+```bash
+npx wrangler d1 execute docs_lm --file migrations/0001_init.sql --remote
+```
+
+### 4) Start backend
+
 ```bash
 npx wrangler dev --config wrangler.jsonc
 ```
 
-### Full remote dev (Worker runs on Cloudflare)
-```bash
-npx wrangler dev --remote --config wrangler.jsonc
-```
+### 5) Start frontend
 
-## Frontend (Vite + React)
-
-### Run locally
 ```bash
 cd apps/web
-npm install
 npm run dev
 ```
 
-Optional API base override:
+The Vite config proxies `/api` to `http://127.0.0.1:8787` by default.
+
+## Helpful Commands
+
+- Lint repo:
+
 ```bash
-VITE_API_BASE=http://127.0.0.1:8787 npm run dev
+npm run lint
 ```
 
-### Example requests
-Create a project from a GitHub repo:
-```bash
-curl -X POST http://127.0.0.1:8787/api/projects \
-  -H "content-type: application/json" \
-  -d '{"name":"My Project","source_ref":"https://github.com/org/repo"}'
-```
-Note: project names must be alphanumeric with spaces or dashes.
-The response includes a generated `project_id` (ULID).
+- Backend smoke test script:
 
-List projects:
 ```bash
-curl http://127.0.0.1:8787/api/projects
+bash scripts/test_backend.sh
 ```
 
-Check indexing status:
-```bash
-curl "http://127.0.0.1:8787/api/index/status?project_id=my-project"
-```
+## TODO
 
-Chat:
-```bash
-curl -X POST http://127.0.0.1:8787/api/chat \
-  -H "content-type: application/json" \
-  -d '{"project_id":"my-project","message":"How do I install it?"}'
-```
-
-List chat sessions for a project:
-```bash
-curl http://127.0.0.1:8787/api/projects/my-project/sessions
-```
+- Alternative ingestion methods (sitemap crawling, direct file uploads, PDF ingestion).
+- Mind map and quiz generation features.
+- Advanced RAG improvements (rerankers, fusion retrieval, SELF-RAG-style patterns).
+- Full auth/rate-limit hardening for multi-user production use.
+- Automated test suite (lint exists; no dedicated test runner configured yet).

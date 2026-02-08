@@ -270,7 +270,7 @@ function ProjectListPage() {
         </form>
       </section>
 
-      <section className="panel">
+      <section className="panel projects-pane">
         <div className="panel-header">
           <h2>Projects</h2>
           {loading ? <span className="muted">Loading...</span> : <span className="muted">{projects.length} tracked</span>}
