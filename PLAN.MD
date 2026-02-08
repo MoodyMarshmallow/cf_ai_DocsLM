@@ -225,11 +225,19 @@ Security and abuse
 - Retrieval strictly scoped to project_id to prevent cross-project leakage
 
 ### Frontend Presentation and Layout
-The UI should be minimal but deliberate, focused on chat and project management.
+The UI should be minimal and clean. The color scheme should be inspired by dark-mode dev environments. The UI will consist of 2 pages, a project page and a chat page:
 
-Chat page (Pages)
-- Two-panel layout on desktop: left column for project list and session controls, right for chat
-- Mobile: single column with collapsible project list
+Project Page
+- Used to create projects
+- small hero section in top 3rd of the page with DocsLM title
+- text bar below the hero section to enter github repo link, with a 'grep this repo' submitt button to the left
+- Existing projects shown as rectangular cards below the search bar. 5 of these cards should fit across a normal 1920x1080px screen
+  - Clicking on project card will bring up the chat page in that project. Deletion and rename functions should be hidden in a popup that opens when an action button on the top right of the card is clicked.
+  -  Just to the left of the action button (action button should be on the top right corner of the card) should be a LED indicator of the project's status as ready/indexing/failed, which corresponds to green/orange/red. There should also be text to the right of the LED reading 'status: <STATUS>'.
+
+Chat page
+- Two-panel layout on desktop: left column for chat session switching and management, right for chat
+- Note: Projects share the same datastore and allow the user to easily create multiple chat sessions for each project.
 - Message list with citations and chunk source links
 - Input row with text box and send button
 - Streaming responses with partial tokens for perceived speed

@@ -41,6 +41,9 @@ export class ChatSessionDO {
       return jsonError("Method not allowed", 405)
     }
 
+    const url = new URL(request.url)
+    const stream = url.pathname === "/chat/stream"
+
     const body = await request.json()
     const parsed = parseChatRequest(body)
     if (!parsed.ok) {
@@ -53,9 +56,24 @@ export class ChatSessionDO {
       await this.state.storage.put("project_id", session.project_id)
     }
 
+    if (session.project_id && session.project_id !== parsed.value.project_id) {
+      console.warn("[chat] durable object project mismatch", {
+        stored_project_id: session.project_id,
+        request_project_id: parsed.value.project_id,
+        session_id: parsed.value.session_id,
+      })
+      return jsonError("Session belongs to a different project", 409)
+    }
+
     const retrieval = await this.retrieveContext(parsed.value, session)
     logRetrievalContext(parsed.value.project_id, retrieval)
     const responseText = await this.generateResponse(parsed.value, session, retrieval)
+    if (!responseText) {
+      console.warn("[chat] empty model response", {
+        project_id: parsed.value.project_id,
+        session_id: parsed.value.session_id,
+      })
+    }
 
     session.turns.push({ role: "user", content: parsed.value.message })
     session.turns.push({ role: "assistant", content: responseText })
@@ -63,11 +81,22 @@ export class ChatSessionDO {
 
     await this.state.storage.put("turns", session.turns)
     await this.state.storage.put("summary", session.summary)
+    await persistTurns(
+      this.env,
+      parsed.value.project_id,
+      parsed.value.session_id,
+      parsed.value.message,
+      responseText,
+    )
 
     const response: ChatResponse = {
       session_id: parsed.value.session_id,
       message: responseText,
       citations: retrieval.citations,
+    }
+
+    if (stream) {
+      return streamChatResponse(response)
     }
 
     return jsonResponse(response)
@@ -346,6 +375,91 @@ function jsonError(message: string, status: number): Response {
       "content-type": "application/json",
     },
   })
+}
+
+function streamChatResponse(payload: ChatResponse): Response {
+  const encoder = new TextEncoder()
+  const chunks = chunkTextForStream(payload.message)
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller): Promise<void> {
+      for (const chunk of chunks) {
+        const line = JSON.stringify({ type: "token", text: chunk }) + "\n"
+        controller.enqueue(encoder.encode(line))
+        await sleep(8)
+      }
+
+      const doneLine =
+        JSON.stringify({
+          type: "done",
+          session_id: payload.session_id,
+          citations: payload.citations,
+        }) + "\n"
+      controller.enqueue(encoder.encode(doneLine))
+      controller.close()
+    },
+  })
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "content-type": "application/x-ndjson; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  })
+}
+
+function chunkTextForStream(text: string): string[] {
+  const chunks: string[] = []
+  const size = 24
+  for (let i = 0; i < text.length; i += size) {
+    chunks.push(text.slice(i, i + size))
+  }
+  if (chunks.length === 0) {
+    chunks.push("")
+  }
+  return chunks
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise(function (resolve) {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function persistTurns(
+  env: Env,
+  projectId: string,
+  sessionId: string,
+  userMessage: string,
+  assistantMessage: string,
+): Promise<void> {
+  const now = new Date().toISOString()
+  try {
+    await env.DB.prepare(
+      "INSERT INTO chat_logs (session_id, project_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+      .bind(sessionId, projectId, "user", userMessage, now)
+      .run()
+
+    await env.DB.prepare(
+      "INSERT INTO chat_logs (session_id, project_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+      .bind(sessionId, projectId, "assistant", assistantMessage, now)
+      .run()
+
+    await env.DB.prepare(
+      "UPDATE chat_sessions SET updated_at = ?, last_message_at = ? WHERE session_id = ? AND project_id = ?",
+    )
+      .bind(now, now, sessionId, projectId)
+      .run()
+  } catch (error) {
+    console.error("[chat] failed to persist chat turns in durable object", {
+      project_id: projectId,
+      session_id: sessionId,
+      error: String(error),
+    })
+  }
 }
 
 interface ChunkRow {

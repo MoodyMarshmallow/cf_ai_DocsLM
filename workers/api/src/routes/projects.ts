@@ -5,11 +5,19 @@ import { Env, IndexRequest } from "../../../../packages/shared/src/types"
  * Routes project creation requests for GitHub sources.
  */
 export async function handleProjectList(_request: Request, env: Env): Promise<Response> {
+  console.log("[projects] list start")
   const statement = env.DB.prepare(
     "SELECT project_id, name, source_ref, status, created_at, updated_at FROM projects ORDER BY created_at DESC",
   )
-  const result = await statement.all<{ results?: ProjectRow[] }>()
-  return jsonResponse({ projects: result.results || [] })
+  try {
+    const result = await statement.all<{ results?: ProjectRow[] }>()
+    const projects = result.results || []
+    console.log("[projects] list ok", { count: projects.length })
+    return jsonResponse({ projects: projects })
+  } catch (error) {
+    console.error("[projects] list failed", { error: String(error) })
+    return jsonError("Failed to list projects", 500)
+  }
 }
 
 export async function handleProjectCreate(request: Request, env: Env): Promise<Response> {
@@ -130,6 +138,7 @@ export async function handleProjectDelete(request: Request, env: Env): Promise<R
   await deleteR2Prefix(env, "projects/" + projectId + "/")
 
   await env.DB.prepare("DELETE FROM chat_logs WHERE project_id = ?").bind(projectId).run()
+  await env.DB.prepare("DELETE FROM chat_sessions WHERE project_id = ?").bind(projectId).run()
   await env.DB.prepare("DELETE FROM chunks WHERE project_id = ?").bind(projectId).run()
   await env.DB.prepare("DELETE FROM documents WHERE project_id = ?").bind(projectId).run()
   await env.DB.prepare("DELETE FROM projects WHERE project_id = ?").bind(projectId).run()

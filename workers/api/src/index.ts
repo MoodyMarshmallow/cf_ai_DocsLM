@@ -1,4 +1,4 @@
-import { handleChat } from "./routes/chat"
+import { handleChat, handleChatStream } from "./routes/chat"
 import { handleIndexStart, handleIndexStatus } from "./routes/indexing"
 import {
   handleProjectCreate,
@@ -6,6 +6,13 @@ import {
   handleProjectList,
   handleProjectUpdate,
 } from "./routes/projects"
+import {
+  handleSessionCreate,
+  handleSessionDelete,
+  handleSessionList,
+  handleSessionMessages,
+  handleSessionUpdate,
+} from "./routes/sessions"
 import { Env } from "../../../packages/shared/src/types"
 
 export default {
@@ -25,12 +32,41 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return handleChat(request, env)
   }
 
+  if (path === "/api/chat/stream" && request.method === "POST") {
+    return handleChatStream(request, env)
+  }
+
   if (path === "/api/projects" && request.method === "GET") {
     return handleProjectList(request, env)
   }
 
   if (path === "/api/projects" && request.method === "POST") {
     return handleProjectCreate(request, env)
+  }
+
+  if (path.startsWith("/api/projects/") && path.endsWith("/sessions") && request.method === "GET") {
+    return handleSessionList(request, env)
+  }
+
+  if (path.startsWith("/api/projects/") && path.endsWith("/sessions") && request.method === "POST") {
+    return handleSessionCreate(request, env)
+  }
+
+  if (
+    path.startsWith("/api/projects/") &&
+    path.includes("/sessions/") &&
+    path.endsWith("/messages") &&
+    request.method === "GET"
+  ) {
+    return handleSessionMessages(request, env)
+  }
+
+  if (path.startsWith("/api/projects/") && path.includes("/sessions/") && request.method === "PATCH") {
+    return handleSessionUpdate(request, env)
+  }
+
+  if (path.startsWith("/api/projects/") && path.includes("/sessions/") && request.method === "DELETE") {
+    return handleSessionDelete(request, env)
   }
 
   if (path.startsWith("/api/projects/") && request.method === "PATCH") {

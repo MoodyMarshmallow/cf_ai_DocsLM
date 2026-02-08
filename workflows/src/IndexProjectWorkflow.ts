@@ -3,7 +3,7 @@ import type { WorkflowEvent } from "cloudflare:workers"
 import { chunkText } from "../../packages/shared/src/chunking"
 import { sha256Hex } from "../../packages/shared/src/hash"
 import { normalizeHtmlToText, normalizeMarkdownToText } from "../../packages/shared/src/normalization"
-import { Env, IndexRequest } from "../../packages/shared/src/types"
+import { Env, IndexRequest, VectorizeUpsertItem } from "../../packages/shared/src/types"
 
 export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> {
   /**
@@ -14,8 +14,10 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
       const input = event.payload
       const env = this.env
       const maxChunks = 500
+      const maxUpsertBatchSize = 1000
       let remainingChunks = maxChunks
       let lastMutationId: string | null = null
+      const pendingVectors: VectorizeUpsertItem[] = []
       await step.do("mark project indexing", async function () {
         await markProjectStatus(env, input, "indexing")
       })
@@ -34,12 +36,21 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
         }
 
         const processed = await step.do("process source", async function () {
-          return processSource(env, input, source, remainingChunks)
+          return processSource(env, input, source, remainingChunks, pendingVectors, maxUpsertBatchSize)
         })
 
         remainingChunks = Math.max(0, remainingChunks - processed.count)
         if (processed.lastMutationId) {
           lastMutationId = processed.lastMutationId
+        }
+      }
+
+      if (pendingVectors.length > 0) {
+        const mutationId = await step.do("upsert final vector batch", async function () {
+          return upsertVectorBatch(env, pendingVectors)
+        })
+        if (mutationId) {
+          lastMutationId = mutationId
         }
       }
 
@@ -61,8 +72,10 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
       })
       console.log("[indexing] project complete", { project_id: input.project_id })
     } catch (error) {
-      void error
-      await markProjectStatus(this.env, event.payload, "failed")
+      await markProjectStatus(this.env, event.payload, "failed", {
+        reason: "Unhandled indexing workflow error",
+        error: error,
+      })
     }
   }
 }
@@ -356,19 +369,21 @@ async function processSource(
   input: IndexRequest,
   source: SourceItem,
   remainingChunks: number,
-): Promise<{ count: number; lastMutationId: string | null }> {
+  pendingVectors: VectorizeUpsertItem[],
+  maxUpsertBatchSize: number,
+): Promise<{ count: number; lastMutationId: string | null; vectorsCreated: number }> {
   if (remainingChunks <= 0) {
-    return { count: 0, lastMutationId: null }
+    return { count: 0, lastMutationId: null, vectorsCreated: 0 }
   }
 
   const fetchResult = await fetchSource(env, source, input.project_id)
   if (!fetchResult.ok) {
-    return { count: 0, lastMutationId: null }
+    return { count: 0, lastMutationId: null, vectorsCreated: 0 }
   }
 
   const normalized = normalizeContent(fetchResult)
   if (!normalized.ok) {
-    return { count: 0, lastMutationId: null }
+    return { count: 0, lastMutationId: null, vectorsCreated: 0 }
   }
 
   logContentPreview(input.project_id, fetchResult.url, normalized.text)
@@ -391,15 +406,33 @@ async function processSource(
 
   const chunks = chunkText(normalized.text, { max_chars: 8000, overlap_chars: 800, min_chars: 500 })
   const cappedChunks = chunks.slice(0, Math.max(0, remainingChunks))
+  let vectorsCreated = 0
   let lastMutationId: string | null = null
+
   for (const chunk of cappedChunks) {
-    const mutationId = await processChunk(env, input, document, chunk)
-    if (mutationId) {
-      lastMutationId = mutationId
+    const vectorItem = await processChunk(env, input, document, chunk)
+    if (vectorItem) {
+      vectorsCreated += 1
+      pendingVectors.push(vectorItem)
+    }
+
+    if (pendingVectors.length >= maxUpsertBatchSize) {
+      const batch = pendingVectors.splice(0, maxUpsertBatchSize)
+      const mutationId = await upsertVectorBatch(env, batch)
+      if (mutationId) {
+        lastMutationId = mutationId
+      }
     }
   }
 
-  return { count: cappedChunks.length, lastMutationId: lastMutationId }
+  console.log("[indexing] source processed", {
+    project_id: input.project_id,
+    source_url: source.url,
+    chunks_processed: cappedChunks.length,
+    vectors_created: vectorsCreated,
+  })
+
+  return { count: cappedChunks.length, lastMutationId: lastMutationId, vectorsCreated: vectorsCreated }
 }
 
 /**
@@ -447,23 +480,25 @@ function normalizeContent(fetchResult: FetchResult): NormalizeResult {
 }
 
 /**
- * Embeds a chunk and persists vector metadata and chunk text.
+ * Embeds a chunk, persists chunk text, and returns vector payload for batch upsert.
  */
 async function processChunk(
   env: Env,
   input: IndexRequest,
   document: DocumentInsert,
   chunk: { text: string; heading_path?: string; chunk_index: number; token_estimate: number },
-): Promise<string | null> {
+): Promise<VectorizeUpsertItem | null> {
   const chunkId = await sha256Hex(document.doc_id + String(chunk.chunk_index))
   const vector = await embedText(env, chunk.text)
 
-  const mutationId = await upsertVector(env, chunkId, vector, {
-    project_id: input.project_id,
-    doc_id: document.doc_id,
-    url: document.url,
-    heading: chunk.heading_path || "",
-  })
+  if (vector.length === 0) {
+    console.warn("[indexing] empty embedding returned for chunk", {
+      project_id: input.project_id,
+      chunk_id: chunkId,
+      chunk_index: chunk.chunk_index,
+      url: document.url,
+    })
+  }
 
   await upsertChunk(env, {
     chunk_id: chunkId,
@@ -477,7 +512,20 @@ async function processChunk(
     token_estimate: chunk.token_estimate,
   })
 
-  return mutationId
+  if (vector.length === 0) {
+    return null
+  }
+
+  return {
+    id: chunkId,
+    values: vector,
+    metadata: {
+      project_id: input.project_id,
+      doc_id: document.doc_id,
+      url: document.url,
+      heading: chunk.heading_path || "",
+    },
+  }
 }
 
 /**
@@ -502,14 +550,16 @@ async function embedText(env: Env, text: string): Promise<number[]> {
 }
 
 /**
- * Upserts a vector with metadata into Vectorize.
+ * Upserts a batch of vectors with metadata into Vectorize.
  */
-async function upsertVector(
+async function upsertVectorBatch(
   env: Env,
-  chunkId: string,
-  vector: number[],
-  metadata: Record<string, string>,
+  vectors: VectorizeUpsertItem[],
 ): Promise<string | null> {
+  if (vectors.length === 0) {
+    return null
+  }
+
   if (!env.VECTORIZE_INDEX) {
     console.warn("[indexing] vector upsert skipped", { reason: "binding unavailable" })
     return null
@@ -522,13 +572,20 @@ async function upsertVector(
     return null
   }
 
-  const result = await env.VECTORIZE_INDEX.upsert([
-    { id: chunkId, values: vector, metadata: metadata },
-  ])
-  console.log("[indexing] vector upserted", { id: chunkId })
+  const result = await env.VECTORIZE_INDEX.upsert(vectors)
+  console.log("[indexing] vectors upserted", {
+    count: vectors.length,
+    first_id: vectors[0].id,
+    last_id: vectors[vectors.length - 1].id,
+  })
+
   if (result && result.mutationId) {
     return result.mutationId
   }
+
+  console.warn("[indexing] vector upsert returned without mutation id", {
+    count: vectors.length,
+  })
   return null
 }
 
@@ -609,7 +666,28 @@ async function upsertChunk(env: Env, chunk: ChunkInsert): Promise<void> {
 /**
  * Updates the project status in D1.
  */
-async function markProjectStatus(env: Env, input: IndexRequest, status: string): Promise<void> {
+async function markProjectStatus(
+  env: Env,
+  input: IndexRequest,
+  status: string,
+  context?: { reason?: string; error?: unknown },
+): Promise<void> {
+  if (status === "failed") {
+    const reason = context && context.reason ? context.reason : "Project marked failed"
+    const errorMessage =
+      context && context.error
+        ? context.error instanceof Error
+          ? context.error.stack || context.error.message
+          : String(context.error)
+        : "unknown error"
+    console.error("[indexing] project failed", {
+      project_id: input.project_id,
+      source_ref: input.source_ref,
+      reason: reason,
+      error: errorMessage,
+    })
+  }
+
   const statement = env.DB.prepare(
     "UPDATE projects SET status = ?, updated_at = ? WHERE project_id = ?",
   )

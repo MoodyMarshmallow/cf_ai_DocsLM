@@ -19,6 +19,7 @@ npx wrangler d1 create docs_lm
 3) Apply the D1 migration
 ```bash
 npx wrangler d1 execute docs_lm --file migrations/0001_init.sql --remote
+npx wrangler d1 execute docs_lm --file migrations/0002_chat_sessions.sql --remote
 ```
 
 4) Create the R2 bucket Make sure you say yes to using the remote server.
@@ -87,4 +88,9 @@ Chat:
 curl -X POST http://127.0.0.1:8787/api/chat \
   -H "content-type: application/json" \
   -d '{"project_id":"my-project","message":"How do I install it?"}'
+```
+
+List chat sessions for a project:
+```bash
+curl http://127.0.0.1:8787/api/projects/my-project/sessions
 ```
