@@ -13,7 +13,7 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
     try {
       const input = event.payload
       const env = this.env
-      const maxChunks = 500
+      const maxChunks = 1000
       const maxUpsertBatchSize = 1000
       let remainingChunks = maxChunks
       let lastMutationId: string | null = null

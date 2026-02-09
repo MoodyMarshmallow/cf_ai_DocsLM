@@ -117,7 +117,7 @@ Follow these conventions consistently. The project deliberately avoids terse pat
 - Chunking is recursive (headings → paragraphs → sentences) with overlap.
 - GitHub ingestion uses the repo tree API and raw GitHub URLs (public repos only).
 - GitHub API requests must include a `User-Agent` header to avoid 403 responses.
-- Chunk budget is capped per project (500 total), and higher-scoring files are processed first.
+- Chunk budget is capped per project (1000 total), and higher-scoring files are processed first.
 
 ### API behavior
 - `POST /api/projects` creates a project from a GitHub repo URL and triggers indexing. Accepts `{ name, source_ref }`.
