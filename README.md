@@ -1,10 +1,10 @@
 # DocsLM
 
-DocsLM turns a public GitHub repository into a project-scoped chat experience.
+DocsLM turns a public GitHub repository into a chatbot so you can get up to speed with a new library quickly.
 
-It indexes repo files, stores chunk metadata in D1, raw content in R2, vectors in Vectorize, and serves chat through a Durable Object with retrieval scoped by `project_id`.
+It indexes repo docs, stores chunk metadata in D1, raw content in R2, vectors in Vectorize, and serves chat through a Durable Object with retrieval scoped by `project_id`.
 
-## What It Does Today
+## Features
 
 - Create, list, rename, and delete projects.
 - Index public GitHub repositories (README/docs/code text files).
@@ -12,6 +12,14 @@ It indexes repo files, stores chunk metadata in D1, raw content in R2, vectors i
 - Chat with citations against indexed project content.
 - Manage multiple chat sessions per project.
 - Stream chat responses to the frontend.
+
+## TODO
+
+- Alternative ingestion methods (sitemap crawling, direct file uploads, PDF ingestion).
+- Mind map and quiz generation features.
+- Advanced RAG improvements (rerankers, fusion retrieval, SELF-RAG-style patterns).
+- Full auth/rate-limit hardening for multi-user production use.
+- Automated test suite (lint exists; no dedicated test runner configured yet).
 
 ## Architecture
 
@@ -85,11 +93,3 @@ npm run lint
 ```bash
 bash scripts/test_backend.sh
 ```
-
-## TODO
-
-- Alternative ingestion methods (sitemap crawling, direct file uploads, PDF ingestion).
-- Mind map and quiz generation features.
-- Advanced RAG improvements (rerankers, fusion retrieval, SELF-RAG-style patterns).
-- Full auth/rate-limit hardening for multi-user production use.
-- Automated test suite (lint exists; no dedicated test runner configured yet).
