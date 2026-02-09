@@ -24,13 +24,18 @@ function ProjectChatPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [activeSessionId, setActiveSessionIdState] = useState<string | null>(null)
   const [openSessionMenuId, setOpenSessionMenuId] = useState<string | null>(null)
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
+  const [editingSessionTitleDraft, setEditingSessionTitleDraft] = useState("")
   const [sessionsError, setSessionsError] = useState<string | null>(null)
   const [sessionsLoading, setSessionsLoading] = useState(true)
   const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [openCitationPanels, setOpenCitationPanels] = useState<Record<string, boolean>>({})
   const [messagesLoading, setMessagesLoading] = useState(false)
   const [input, setInput] = useState("")
   const [sending, setSending] = useState(false)
   const [sessionNameDraft, setSessionNameDraft] = useState("")
+  const [editingActiveTitle, setEditingActiveTitle] = useState(false)
+  const [activeTitleDraft, setActiveTitleDraft] = useState("")
 
   useEffect(function () {
     if (!projectId) {
@@ -54,7 +59,7 @@ function ProjectChatPage() {
 
     void pollStatus()
 
-    if (status !== "indexing") {
+    if (status !== "indexing" && status !== "waiting_vector_upload") {
       return function () {
         cancelled = true
       }
@@ -131,6 +136,7 @@ function ProjectChatPage() {
     function () {
       if (!projectId || !activeSessionId) {
         setMessages([])
+        setOpenCitationPanels({})
         return
       }
       const currentSessionId = activeSessionId
@@ -150,9 +156,11 @@ function ProjectChatPage() {
             } as ChatMessage
           })
           setMessages(mapped)
+          setOpenCitationPanels({})
         } catch (error) {
           if (!cancelled) {
             setMessages([])
+            setOpenCitationPanels({})
           }
         } finally {
           if (!cancelled) {
@@ -254,6 +262,7 @@ function ProjectChatPage() {
       setSessionNameDraft("")
       setActiveSessionId(projectId, created.session_id)
       setActiveSessionIdState(created.session_id)
+      setOpenCitationPanels({})
       setOpenSessionMenuId(null)
       setSessionsError(null)
     } catch (error) {
@@ -265,24 +274,36 @@ function ProjectChatPage() {
     if (!projectId) {
       return
     }
-    const nextTitle = window.prompt("Rename chat session")
-    if (!nextTitle || !nextTitle.trim()) {
+
+    const nextTitle = editingSessionTitleDraft.trim()
+    if (!nextTitle) {
+      setEditingSessionId(null)
+      setEditingSessionTitleDraft("")
       return
     }
+
     try {
-      await renameSession(projectId, sessionId, nextTitle.trim())
+      await renameSession(projectId, sessionId, nextTitle)
       setSessions(
         sessions.map(function (session) {
           if (session.session_id === sessionId) {
-            return { ...session, title: nextTitle.trim() }
+            return { ...session, title: nextTitle }
           }
           return session
         }),
       )
+      setEditingSessionId(null)
+      setEditingSessionTitleDraft("")
       setOpenSessionMenuId(null)
     } catch (error) {
       setSessionsError("Failed to rename session")
     }
+  }
+
+  function startInlineRename(sessionId: string, currentTitle: string): void {
+    setEditingSessionId(sessionId)
+    setEditingSessionTitleDraft(currentTitle)
+    setOpenSessionMenuId(null)
   }
 
   async function handleDeleteSession(sessionId: string): Promise<void> {
@@ -318,14 +339,68 @@ function ProjectChatPage() {
     }
   }
 
+  async function handleRenameActiveSession(nextTitle: string): Promise<void> {
+    if (!projectId || !activeSessionId || !activeSession) {
+      return
+    }
+    if (!nextTitle.trim()) {
+      cancelActiveTitleEdit()
+      return
+    }
+
+    try {
+      await renameSession(projectId, activeSessionId, nextTitle.trim())
+      setSessions(
+        sessions.map(function (session) {
+          if (session.session_id === activeSessionId) {
+            return { ...session, title: nextTitle.trim() }
+          }
+          return session
+        }),
+      )
+      setSessionsError(null)
+      setEditingActiveTitle(false)
+    } catch (error) {
+      setSessionsError("Failed to rename session")
+    }
+  }
+
+  function startActiveTitleEdit(): void {
+    if (!activeSession) {
+      return
+    }
+    setActiveTitleDraft(activeSession.title)
+    setEditingActiveTitle(true)
+  }
+
+  function cancelActiveTitleEdit(): void {
+    setEditingActiveTitle(false)
+    setActiveTitleDraft("")
+  }
+
   const disabled = status !== "ready" || sending
+  const statusText = status === "waiting_vector_upload" ? "waiting for vector upload..." : status
   const activeSession = sessions.find(function (session) {
     return session.session_id === activeSessionId
   })
 
+  function citationKey(index: number): string {
+    return String(index)
+  }
+
+  function toggleCitations(index: number): void {
+    const key = citationKey(index)
+    setOpenCitationPanels(function (prev) {
+      return {
+        ...prev,
+        [key]: !prev[key],
+      }
+    })
+  }
+
   return (
     <div className="page chat-page">
-      <span className={`status status-${status} chat-page-status`}>{status}</span>
+      <span className={`status status-${status} chat-page-status`}>{statusText}</span>
 
       {statusError ? <p className="error">{statusError}</p> : null}
 
@@ -370,6 +445,10 @@ function ProjectChatPage() {
                   role="button"
                   tabIndex={0}
                   onKeyDown={function (event) {
+                    const target = event.target as HTMLElement
+                    if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
+                      return
+                    }
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault()
                       setActiveSessionId(projectId, session.session_id)
@@ -378,7 +457,43 @@ function ProjectChatPage() {
                   }}
                 >
                   <div className="session-item-top">
-                    <span className="session-main">{session.title}</span>
+                    {editingSessionId === session.session_id ? (
+                      <textarea
+                        className="session-title-input"
+                        rows={1}
+                        value={editingSessionTitleDraft}
+                        autoFocus
+                        onClick={function (event) {
+                          event.stopPropagation()
+                        }}
+                        onChange={function (event) {
+                          setEditingSessionTitleDraft(event.target.value)
+                        }}
+                        onInput={function (event) {
+                          const target = event.currentTarget
+                          target.style.height = "auto"
+                          target.style.height = target.scrollHeight + "px"
+                        }}
+                        onBlur={function () {
+                          void handleRenameSession(session.session_id)
+                        }}
+                        onKeyDown={function (event) {
+                          event.stopPropagation()
+                          if (event.key === "Enter") {
+                            event.preventDefault()
+                            void handleRenameSession(session.session_id)
+                            return
+                          }
+                          if (event.key === "Escape") {
+                            event.preventDefault()
+                            setEditingSessionId(null)
+                            setEditingSessionTitleDraft("")
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span className="session-main">{session.title}</span>
+                    )}
                     <div className="session-menu-wrap">
                       <button className="menu-trigger" onClick={function (event) {
                         event.stopPropagation()
@@ -394,7 +509,7 @@ function ProjectChatPage() {
                         <div className="project-menu">
                           <button className="secondary" onClick={function (event) {
                             event.stopPropagation()
-                            void handleRenameSession(session.session_id)
+                            startInlineRename(session.session_id, session.title)
                           }}>
                             Rename
                           </button>
@@ -416,12 +531,45 @@ function ProjectChatPage() {
 
         <div className="chat-panel">
           <div className="chat-panel-head">
-            <h3>{activeSession ? activeSession.title : "No active session"}</h3>
+            {editingActiveTitle && activeSession ? (
+              <input
+                className="chat-title-input"
+                value={activeTitleDraft}
+                autoFocus
+                onChange={function (event) {
+                  setActiveTitleDraft(event.target.value)
+                }}
+                onBlur={function () {
+                  void handleRenameActiveSession(activeTitleDraft)
+                }}
+                onKeyDown={function (event) {
+                  if (event.key === "Enter") {
+                    event.preventDefault()
+                    void handleRenameActiveSession(activeTitleDraft)
+                    return
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault()
+                    cancelActiveTitleEdit()
+                  }
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className="chat-title-button"
+                onClick={startActiveTitleEdit}
+                disabled={!activeSession}
+              >
+                {activeSession ? activeSession.title : "No active session"}
+              </button>
+            )}
           </div>
           <div className="messages">
           {messagesLoading ? <p className="muted">Loading messages...</p> : null}
           {!messagesLoading && messages.length === 0 ? <p className="muted">Start a new conversation.</p> : null}
           {messages.map(function (message, index) {
+            const panelOpen = Boolean(openCitationPanels[citationKey(index)])
             return (
               <div key={index} className={`message ${message.role}`}>
                 <div className="bubble">
@@ -442,17 +590,31 @@ function ProjectChatPage() {
                     <p>{message.content}</p>
                   )}
                   {message.citations && message.citations.length > 0 ? (
-                    <ul className="citations">
-                      {message.citations.map(function (citation, idx) {
-                        return (
-                          <li key={idx}>
-                            <a href={citation.url} target="_blank" rel="noreferrer">
-                              {citation.heading_path || citation.url}
-                            </a>
-                          </li>
-                        )
-                      })}
-                    </ul>
+                    <div className="citations-dropdown">
+                      <button
+                        type="button"
+                        className="citations-toggle"
+                        onClick={function () {
+                          toggleCitations(index)
+                        }}
+                      >
+                        {panelOpen ? "Hide sources" : "Show sources"} ({message.citations.length})
+                      </button>
+                      {panelOpen ? (
+                        <ul className="citations">
+                          {message.citations.map(function (citation, idx) {
+                            const displayUrl = toGithubBrowseUrl(citation.url)
+                            return (
+                              <li key={idx}>
+                                <a href={displayUrl} target="_blank" rel="noreferrer">
+                                  {citation.heading_path || displayUrl}
+                                </a>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               </div>
@@ -466,7 +628,7 @@ function ProjectChatPage() {
               onChange={function (event) {
                 setInput(event.target.value)
               }}
-              placeholder={status === "ready" ? "Ask a question" : "Indexing in progress"}
+              placeholder={status === "ready" ? "Ask a question" : "Project setup in progress"}
               disabled={disabled || !activeSessionId}
             />
             <button type="submit" disabled={disabled || !activeSessionId}>
@@ -477,6 +639,19 @@ function ProjectChatPage() {
       </section>
     </div>
   )
+}
+
+function toGithubBrowseUrl(url: string): string {
+  const match = url.match(/^https?:\/\/raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/)
+  if (!match) {
+    return url
+  }
+
+  const owner = match[1]
+  const repo = match[2]
+  const branch = match[3]
+  const path = match[4]
+  return "https://github.com/" + owner + "/" + repo + "/blob/" + branch + "/" + path
 }
 
 export default ProjectChatPage

@@ -55,6 +55,10 @@ export class IndexProjectWorkflow extends WorkflowEntrypoint<Env, IndexRequest> 
       }
 
       if (lastMutationId) {
+        await step.do("mark project waiting vector upload", async function () {
+          await markProjectStatus(env, input, "waiting_vector_upload")
+        })
+
         const ready = await step.do("wait for vectorize", async function () {
           return waitForVectorizeMutation(env, lastMutationId)
         })

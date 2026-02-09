@@ -11,6 +11,8 @@ function ProjectListPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
   const [busyProjectId, setBusyProjectId] = useState<string | null>(null)
+  const [editingProjectId, setEditingProjectId] = useState<string | null>(null)
+  const [editingProjectNameDraft, setEditingProjectNameDraft] = useState("")
   const [typedTitle, setTypedTitle] = useState("")
   const [titleDone, setTitleDone] = useState(false)
   const [showCursor, setShowCursor] = useState(true)
@@ -53,7 +55,7 @@ function ProjectListPage() {
   useEffect(
     function () {
       const indexingProjects = projects.filter(function (project) {
-        return project.status === "indexing"
+        return project.status === "indexing" || project.status === "waiting_vector_upload"
       })
 
       if (indexingProjects.length === 0) {
@@ -160,8 +162,10 @@ function ProjectListPage() {
 
   async function handleRename(project: Project): Promise<void> {
     setFormError(null)
-    const nextName = window.prompt("Rename project", project.name)
-    if (!nextName || !nextName.trim()) {
+    const nextName = editingProjectNameDraft.trim()
+    if (!nextName) {
+      setEditingProjectId(null)
+      setEditingProjectNameDraft("")
       setOpenMenuId(null)
       return
     }
@@ -169,9 +173,11 @@ function ProjectListPage() {
     try {
       setBusyProjectId(project.project_id)
       await updateProject(project.project_id, {
-        name: nextName.trim(),
+        name: nextName,
       })
       await loadProjects(false)
+      setEditingProjectId(null)
+      setEditingProjectNameDraft("")
       setOpenMenuId(null)
     } catch (err) {
       const code = (err as { code?: string }).code
@@ -183,6 +189,12 @@ function ProjectListPage() {
     } finally {
       setBusyProjectId(null)
     }
+  }
+
+  function startInlineRename(project: Project): void {
+    setEditingProjectId(project.project_id)
+    setEditingProjectNameDraft(project.name)
+    setOpenMenuId(null)
   }
 
   async function handleDelete(projectId: string): Promise<void> {
@@ -217,6 +229,11 @@ function ProjectListPage() {
         return
       }
 
+      if (project.status === "waiting_vector_upload") {
+        window.alert("Indexing is complete. Waiting for vector upload to finish.")
+        return
+      }
+
       if (project.status === "failed") {
         window.alert("This project failed indexing. Please update the source and reindex.")
         return
@@ -232,6 +249,13 @@ function ProjectListPage() {
     }
 
     navigate("/project/" + project.project_id)
+  }
+
+  function statusLabel(status: string): string {
+    if (status === "waiting_vector_upload") {
+      return "waiting for vector upload..."
+    }
+    return status
   }
 
   return (
@@ -286,9 +310,16 @@ function ProjectListPage() {
                 key={project.project_id}
                 className="project-card"
                 onClick={function () {
+                  if (editingProjectId === project.project_id) {
+                    return
+                  }
                   openProject(project)
                 }}
                 onKeyDown={function (event) {
+                  const target = event.target as HTMLElement
+                  if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") {
+                    return
+                  }
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault()
                     openProject(project)
@@ -300,7 +331,7 @@ function ProjectListPage() {
                 <div className="project-card-top">
                   <div className="project-status-inline">
                     <span className={`status-led status-led-${project.status}`} />
-                    <span className="muted">status: {project.status}</span>
+                    <span className="muted">status: {statusLabel(project.status)}</span>
                   </div>
                   <div className="project-menu-wrap">
                     <button
@@ -323,7 +354,7 @@ function ProjectListPage() {
                           className="secondary"
                           onClick={function (event) {
                             event.stopPropagation()
-                            void handleRename(project)
+                            startInlineRename(project)
                           }}
                           disabled={isBusy}
                         >
@@ -343,7 +374,43 @@ function ProjectListPage() {
                     ) : null}
                   </div>
                 </div>
-                <h3>{project.name}</h3>
+                {editingProjectId === project.project_id ? (
+                  <textarea
+                    className="project-title-input"
+                    rows={1}
+                    value={editingProjectNameDraft}
+                    autoFocus
+                    onClick={function (event) {
+                      event.stopPropagation()
+                    }}
+                    onChange={function (event) {
+                      setEditingProjectNameDraft(event.target.value)
+                    }}
+                    onInput={function (event) {
+                      const target = event.currentTarget
+                      target.style.height = "auto"
+                      target.style.height = target.scrollHeight + "px"
+                    }}
+                    onBlur={function () {
+                      void handleRename(project)
+                    }}
+                    onKeyDown={function (event) {
+                      event.stopPropagation()
+                      if (event.key === "Enter") {
+                        event.preventDefault()
+                        void handleRename(project)
+                        return
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault()
+                        setEditingProjectId(null)
+                        setEditingProjectNameDraft("")
+                      }
+                    }}
+                  />
+                ) : (
+                  <h3>{project.name}</h3>
+                )}
                 <p className="muted project-source">{project.source_ref}</p>
               </li>
             )
